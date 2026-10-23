@@ -30,21 +30,30 @@ enum SourceRowStatus {
   FAILED
 }
 
+enum ProductRevisionStatus {
+  DRAFT
+  NEEDS_REVIEW
+  APPROVED
+  REJECTED
+}
+
 model Store {
   id        String     @id @default(uuid()) @db.Uuid
   name      String
   createdAt DateTime   @default(now()) @db.Timestamptz(3)
   suppliers Supplier[]
   imports   Import[]
+  products  Product[]
 }
 
 model Supplier {
-  id        String   @id @default(uuid()) @db.Uuid
-  storeId   String   @db.Uuid
+  id        String    @id @default(uuid()) @db.Uuid
+  storeId   String    @db.Uuid
   name      String
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   imports   Import[]
+  products  Product[]
 
   // Compound reference prevents an import from using another store's supplier.
   @@unique([id, storeId])
@@ -52,25 +61,26 @@ model Supplier {
 }
 
 model Import {
-  id               String       @id @default(uuid()) @db.Uuid
-  storeId          String       @db.Uuid
-  supplierId       String       @db.Uuid
+  id               String            @id @default(uuid()) @db.Uuid
+  storeId          String            @db.Uuid
+  supplierId       String            @db.Uuid
   originalFilename String
   storageKey       String
-  fileSha256       String       @db.VarChar(64)
+  fileSha256       String            @db.VarChar(64)
   idempotencyKey   String
   parserVersion    String
-  mappingConfig    Json         @default("{}")
-  status           ImportStatus @default(PENDING)
+  mappingConfig    Json              @default("{}")
+  status           ImportStatus      @default(PENDING)
   totalRows        Int?
   errorCode        String?
   errorMessage     String?
-  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
-  startedAt        DateTime?    @db.Timestamptz(3)
-  finishedAt       DateTime?    @db.Timestamptz(3)
-  store            Store        @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  supplier         Supplier     @relation(fields: [supplierId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  startedAt        DateTime?         @db.Timestamptz(3)
+  finishedAt       DateTime?         @db.Timestamptz(3)
+  store            Store             @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supplier         Supplier          @relation(fields: [supplierId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   sourceRows       SourceRow[]
+  productRevisions ProductRevision[]
 
   @@unique([id, storeId])
   @@unique([storeId, supplierId, idempotencyKey])
@@ -78,22 +88,121 @@ model Import {
 }
 
 model SourceRow {
-  id             String          @id @default(uuid()) @db.Uuid
-  importId       String          @db.Uuid
-  storeId        String          @db.Uuid
+  id             String              @id @default(uuid()) @db.Uuid
+  importId       String              @db.Uuid
+  storeId        String              @db.Uuid
   sheetIndex     Int
   sheetName      String
   rowNumber      Int
   // Ordered array of { columnIndex, header, value }; never key by header alone.
   rawCells       Json
   rowFingerprint String?
-  status         SourceRowStatus @default(PENDING)
-  issues         Json            @default("[]")
-  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
-  import         Import          @relation(fields: [importId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  status         SourceRowStatus     @default(PENDING)
+  issues         Json                @default("[]")
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
+  import         Import              @relation(fields: [importId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  revisionLinks  RevisionSourceRow[]
 
   // Source fields are also protected by the migration's UPDATE trigger.
+  @@unique([id, storeId])
   @@unique([importId, sheetIndex, rowNumber])
   @@index([importId, status])
+}
+
+model Product {
+  id                  String            @id @default(uuid()) @db.Uuid
+  storeId             String            @db.Uuid
+  supplierId          String            @db.Uuid
+  supplierProductKey  String?
+  publishedRevisionId String?           @db.Uuid
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  archivedAt          DateTime?         @db.Timestamptz(3)
+  store               Store             @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supplier            Supplier          @relation(fields: [supplierId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  variants            Variant[]
+  revisions           ProductRevision[] @relation("ProductRevisions")
+  publishedRevision   ProductRevision?  @relation("PublishedRevision", fields: [publishedRevisionId, id, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([id, storeId])
+  // Archived identities retain their identifiers; no active-only uniqueness.
+  @@unique([storeId, supplierId, supplierProductKey])
+}
+
+model Variant {
+  id         String            @id @default(uuid()) @db.Uuid
+  productId  String            @db.Uuid
+  storeId    String            @db.Uuid
+  // PostgreSQL canonicalizes inserts/updates; use findVariantBySku for raw lookups.
+  sku        String
+  createdAt  DateTime          @default(now()) @db.Timestamptz(3)
+  archivedAt DateTime?         @db.Timestamptz(3)
+  product    Product           @relation(fields: [productId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  revisions  VariantRevision[]
+
+  @@unique([id, productId, storeId])
+  @@unique([storeId, sku])
+  @@index([productId])
+}
+
+model ProductRevision {
+  id                      String                @id @default(uuid()) @db.Uuid
+  productId               String                @db.Uuid
+  storeId                 String                @db.Uuid
+  originImportId          String?               @db.Uuid
+  basePublishedRevisionId String?               @db.Uuid
+  status                  ProductRevisionStatus @default(DRAFT)
+  title                   String?
+  descriptionHtml         String?
+  categoryKey             String?
+  tags                    String[]              @default([])
+  attributes              Json                  @default("{}")
+  reviewReasons           Json                  @default("[]")
+  manualFieldPaths        String[]              @default([])
+  editVersion             Int                   @default(1)
+  createdAt               DateTime              @default(now()) @db.Timestamptz(3)
+  approvedAt              DateTime?             @db.Timestamptz(3)
+  product                 Product               @relation("ProductRevisions", fields: [productId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  originImport            Import?               @relation(fields: [originImportId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  basePublishedRevision   ProductRevision?      @relation("RevisionBaseline", fields: [basePublishedRevisionId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  basedOnBy               ProductRevision[]     @relation("RevisionBaseline")
+  publishedFor            Product[]             @relation("PublishedRevision")
+  variants                VariantRevision[]
+  sourceRows              RevisionSourceRow[]
+
+  @@unique([id, productId, storeId])
+  @@unique([id, storeId])
+  @@unique([originImportId, productId])
+  @@index([productId, createdAt])
+}
+
+model VariantRevision {
+  productRevisionId String              @db.Uuid
+  variantId         String              @db.Uuid
+  storeId           String              @db.Uuid
+  productId         String              @db.Uuid
+  options           Json                @default("{}")
+  priceMinor        BigInt?             @db.BigInt
+  currency          String?             @db.VarChar(3)
+  weightGrams       Int?
+  manualFieldPaths  String[]            @default([])
+  productRevision   ProductRevision     @relation(fields: [productRevisionId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  variant           Variant             @relation(fields: [variantId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  sourceRows        RevisionSourceRow[]
+
+  @@id([productRevisionId, variantId])
+  @@index([variantId])
+}
+
+model RevisionSourceRow {
+  sourceRowId       String           @db.Uuid
+  productRevisionId String           @db.Uuid
+  variantId         String?          @db.Uuid
+  storeId           String           @db.Uuid
+  sourceRow         SourceRow        @relation(fields: [sourceRowId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  productRevision   ProductRevision  @relation(fields: [productRevisionId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  variantRevision   VariantRevision? @relation(fields: [productRevisionId, variantId], references: [productRevisionId, variantId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([sourceRowId, productRevisionId])
+  @@index([productRevisionId, variantId])
 }

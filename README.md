@@ -10,7 +10,7 @@ Supplier files often contain inconsistent prices, repeated rows, incomplete vari
 
 - A Next.js application with a placeholder homepage and health endpoints.
 - An independent worker with PostgreSQL/Redis connectivity and a development BullMQ smoke test.
-- Store, supplier, import, and source-row database models with scoped foreign keys, request uniqueness, and protected original row data.
+- Supplier/source and product/revision database models with scoped relationships, canonical SKU uniqueness, protected original rows, and separate catalog snapshots.
 - Shared TypeScript packages, configuration validation, and local development checks.
 
 **Planned workflow**
@@ -101,4 +101,4 @@ Planned safeguards include durable dispatch through a transactional outbox, idem
 
 ## Current Limitations
 
-The application currently exposes a placeholder page and health checks. Uploads, parsing/normalization, product and variant models, AI generation, translation, merchant review, storefront pages, exports, and cost reporting are not implemented. Authentication and deployment are also pending. No throughput, storefront-load, accuracy, or cost benchmarks are available.
+The application currently exposes a placeholder page and health checks. Uploads, spreadsheet parsing/normalization, product grouping, AI generation, translation, merchant review/publication, storefront pages, exports, and cost reporting are not implemented. Authentication and deployment are also pending. No throughput, storefront-load, accuracy, or cost benchmarks are available.

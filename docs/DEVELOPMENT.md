@@ -138,6 +138,40 @@ Prisma's model language does not express these checks or the trigger, so preserv
 
 Storage keys are currently metadata references only. Full file preservation, catalog identity resolution, and processing/recovery services still need implementation. See [EDGE-CASES.md](../EDGE-CASES.md) for expected behavior and implementation status.
 
+### Product identities, snapshots, and evidence
+
+- **Product** is a stable store/supplier-owned identity, independent of its title. Optional supplier product keys are unique within `(storeId, supplierId)` and match exactly, without SKU-style case normalization. Unknown keys stay null; they do not establish identity. Archived records keep their known identifiers reserved while those values remain on the records.
+- **Variant** is a stable product-owned SKU identity. Canonical SKUs are unique across a store, including archived variants. A missing or unknown SKU is not automatically interpreted as a rename.
+- **ProductRevision** holds proposed or approved text, category, tags, attributes, review reasons, manual field markers, and edit version. Draft text may be incomplete. One import can produce at most one proposal for a product; null-origin merchant revisions may coexist.
+- **VariantRevision** holds one variant's options, price, currency, weight, and manual markers within one product revision. Its primary key is `(productRevisionId, variantId)`. The collection of these records is that revision's complete intended variant set, not all variants ever associated with the product.
+- **RevisionSourceRow** connects original rows to a revision, optionally attributing them to a variant present in that exact revision. Its primary key `(sourceRowId, productRevisionId)` permits one variant attribution per source row/revision. Multiple source rows can support the same variant, and one source row can support different revisions.
+
+Compound foreign keys enforce store and product ownership across these relationships. Product's `publishedRevisionId` and each revision's `basePublishedRevisionId` must reference the same product/store; a revision cannot be its own baseline. Origin imports and evidence rows must belong to the revision's store. Evidence may come from earlier imports so a later snapshot can retain its original supporting rows. Membership does not establish semantic support for a claim.
+
+Published content lives in the selected revision and its variant snapshots. Creating or editing a separate draft does not update that selection or the previous snapshot's values. Stable Product/Variant identity fields are shared across revisions and should not be changed as part of draft-content editing.
+
+**Publication is not implemented.** The published pointer does not yet require `APPROVED` status, and approved snapshots remain directly editable through database access. No automatic approval checks, source-to-draft generation, manual-override merging, edit-version increments, stale-approval detection, or revision immutability triggers exist. `editVersion` and manual field paths store the information needed for future conditional writes and review logic; callers must not treat them as an implemented concurrency workflow. Baseline links enforce ownership, not approval status or freshness.
+
+Future publication must reject unapproved or invalid revisions and protect published product/variant snapshots from further editing. Future AI claim evidence must identify specific supporting source cells, not only source rows. Evidence attribution must also follow an explicit import/supplier policy: the current same-store foreign keys do not prevent accidental cross-supplier claims. These requirements are deferred until their respective workflows are implemented.
+
+Catalog relationships use restrictive deletion rather than cascading into source data. For isolated test cleanup: delete evidence links and variant snapshots, clear published and baseline pointers, delete product revisions, variants, and products, then delete supplier/source fixtures in the order above. Removing a catalog graph does not delete original rows.
+
+### Canonical SKU policy
+
+PostgreSQL's `public.catalogforge_canonical_sku(text)` is the shared normalization rule: remove leading/trailing POSIX whitespace (including ordinary spaces, tabs, and line breaks), then lowercase using the database locale. Internal whitespace, punctuation, and leading zeros are preserved. This policy does not perform transliteration, Unicode normalization, or full Unicode case folding; use a consistent database locale when deploying elsewhere.
+
+A narrowly scoped Variant trigger applies the function before inserts and SKU updates, including direct SQL writes. A check rejects empty/noncanonical stored values, and the ordinary unique constraint on `(storeId, sku)` rejects concurrent canonical collisions. No `citext` extension or application-only duplicate check is required.
+
+For user/supplier input, use `findVariantBySku(storeId, supplierSku)` from the shared database package. It calls the same SQL function and includes archived identities so callers cannot mistake them for new SKUs. Raw Prisma equality filters expect an already-canonical value; they do not normalize input automatically. Future raw-input lookups should use the helper rather than a separate JavaScript lowercase/trim implementation. Original supplier SKU spelling stays in immutable SourceRow cells.
+
+### Money and revision SQL checks
+
+`priceMinor` uses PostgreSQL signed `BIGINT` and Prisma's JavaScript `bigint`; missing values stay null. Use bigint literals or validated decimal strings when constructing values. At JSON boundaries, explicitly serialize monetary integers as decimal strings, such as `priceMinor?.toString() ?? null`. Do not use an unchecked conversion to JavaScript `number`, which loses precision above `Number.MAX_SAFE_INTEGER`; native `JSON.stringify` also cannot serialize bigint directly. No API serializer is implemented yet.
+
+SQL checks enforce nonnegative prices/weights, uppercase three-letter currency syntax, a currency when a price is present, object-shaped options/attributes, array-shaped review reasons, positive edit versions, nonblank known supplier keys, and non-self baselines. A known currency with an unresolved price is allowed. Zero is structurally allowed; supported currencies, business price rules, category membership, nested JSON validation, and publication completeness remain future validation work.
+
+The catalog migration creates all five tables and supporting keys before adding the circular Product/ProductRevision foreign keys, then installs SKU normalization and checks. Its SQL runs in one transaction. Earlier migrations and the SourceRow immutability trigger remain unchanged. Future migrations must preserve these custom SQL checks/functions/triggers. Integration tests exercise both successful relationships and database rejections, including direct SQL SKU writes and bigint values above JavaScript's safe integer range.
+
 ## Worker lifecycle and connectivity smoke test
 
 Start the independent worker with `bun run dev:worker`; stop it with Ctrl+C. Successful startup reports PostgreSQL and Redis connectivity and states that no business jobs are running. SIGINT/SIGTERM close connections and the health listener, with a bounded shutdown deadline.
