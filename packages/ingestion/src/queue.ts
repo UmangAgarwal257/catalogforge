@@ -60,7 +60,10 @@ export async function dispatchPending(queue: Queue, storeId: string): Promise<vo
 }
 
 export function parseConsumer(redisUrl: string, storeId: string, storage: OriginalStorage, queueName = PARSE_QUEUE, lockDuration = 30000) {
-  const connection = new Redis(redisUrl, { maxRetriesPerRequest: null, connectTimeout: 5000 });
+  // connectTimeout only bounds TCP establishment. Bound missing replies too:
+  // Bun/ioredis can otherwise remain in `connect` after an interrupted handshake.
+  // BullMQ duplicates these options for its blocking connection (max wait: 10s).
+  const connection = new Redis(redisUrl, { maxRetriesPerRequest: null, connectTimeout: 5000, socketTimeout: 15000 });
   connection.on("error", () => { /* BullMQ reconnects; don't echo connection credentials. */ });
   const worker = new Worker(queueName, async (job) => {
     const parsed = jobSchema.safeParse(job.data);
@@ -78,5 +81,26 @@ export function parseConsumer(redisUrl: string, storeId: string, storage: Origin
         .catch(() => console.error("Parse failure status will be reconciled by dispatch."));
     }
   });
-  return { worker, connection };
+  async function isAvailable(): Promise<boolean> {
+    if (!worker.isRunning() || worker.isPaused() || worker.closing || connection.status !== "ready") return false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        (async () => {
+          const blocking = await worker.getBackend().blockingClient;
+          if (blocking?.status !== "ready") return false;
+          // Never put health commands behind the dedicated blocking read.
+          await connection.ping();
+          return worker.isRunning() && !worker.isPaused() && !worker.closing &&
+            connection.status === "ready" && blocking.status === "ready";
+        })(),
+        new Promise<false>((resolve) => { timeout = setTimeout(() => resolve(false), 1000); })
+      ]);
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return { worker, connection, isAvailable };
 }

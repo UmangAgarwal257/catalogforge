@@ -1,6 +1,6 @@
 # CatalogForge — Edge Cases
 
-Milestone 0: requirements and architecture planning. This document describes intended behavior, not implemented guarantees.
+Initially recorded during requirements and architecture planning. Most entries describe intended behavior; individually updated statuses identify implemented and tested guarantees.
 
 ## Scope and system assumptions
 
@@ -13,7 +13,7 @@ Milestone 0: requirements and architecture planning. This document describes int
 - Database entities will be introduced incrementally. Durable queue recovery and a transactional outbox belong to the background-processing milestone; this document does not implement them or require all proposed tables immediately.
 - Product updates remain proposals until merchant approval. An existing published version stays available during review.
 - Reliability and accuracy take priority over optional features. Uncertain grouping, unsupported claims, and missing required business data require review rather than guesses.
-- No application implementation has started. Every case below is **Not handled** for that reason. Every test is a future plan; no runtime behavior, recovery guarantee, accuracy result, or performance result has been tested.
+- Entries still marked **Not handled** retain their original planning status and future test plans. The consumer reconnection case below records a verified ingestion failure and its regression-tested handling; it does not establish guarantees for future catalog stages.
 - Proposed policies that are not settled by the approved architecture are identified as recommendations or unresolved decisions. Listing them here does not authorize implementation.
 
 ## Core correctness and reliability invariants
@@ -318,6 +318,13 @@ Milestone 0: requirements and architecture planning. This document describes int
 - **Implementation status:** Not handled — SSE delivery and reconnect behavior have not been implemented.
 - **Planned test:** Disconnect the browser during processing and replay stale events; expect convergence to database state with no duplicate work.
 
+### EC-56 — Redis returns but the ingestion consumer remains stalled
+- **What happens:** After a real connection interruption under Bun, Redis PING and outbox dispatch recover, but the existing consumer's command and blocking connections remain in `connect`, jobs stay waiting, and imports stay PENDING. The original readiness endpoint incorrectly reported 200 because it checked a separate Redis connection.
+- **Application should do:** Bound missing Redis socket replies to fifteen seconds on both consumer connections, retain normal ioredis reconnection and the same BullMQ consumer, and return readiness 503 while the consumer cannot function. Resume durable jobs without changing existing source evidence.
+- **Why:** TCP establishment does not prove Redis initialization completed, and a separate successful PING cannot establish consumer availability. Reconnecting the existing connections avoids duplicate consumers and retains outbox, idempotency and parse-run protections.
+- **Implementation status:** Handled and tested for spreadsheet ingestion — the Bun socket-interruption regression verifies automatic recovery without process/consumer replacement, accurate readiness transitions, exact persisted totals, unchanged partial evidence, repeated interruptions, duplicate delivery, healthy idle stability and graceful shutdown. No guarantee is claimed for future AI/catalog stages or a fixed end-to-end recovery deadline.
+- **Test:** `tests/redis-reconnection.integration.test.ts` runs a Bun child using the production consumer/readiness functions and an isolated TCP proxy. It queues imports during two outages while independent Redis connectivity remains healthy, checks 503 until consumer availability returns, then verifies completion, one consumer, unchanged evidence and exit code zero on SIGTERM. Run with `bun run test:integration` against local PostgreSQL and Redis; fixtures and private queues are cleaned afterward.
+
 ## G. Merchant review, updates, and deletion
 
 ### EC-40 — Merchant edits while AI is running
@@ -440,7 +447,7 @@ Milestone 0: requirements and architecture planning. This document describes int
 
 ## Explicit limitations and unresolved decisions
 
-- No cases are implemented or runtime-tested. The future tests above are plans, not evidence. Document checks do not establish application correctness.
+- Except for individually updated statuses, the tests above remain plans, not runtime evidence. The tested ingestion-consumer recovery case does not establish full-pipeline correctness.
 - No database schema, worker, outbox, recovery loop, UI, AI integration, or deployed environment exists as part of this milestone. Tables will be added only with their approved implementation milestone.
 - Identity rules need agreement: supplier/store scope, missing/reused SKUs, grouping identifiers, fuzzy-match thresholds, and whether identical uploads reuse a run or create linked runs.
 - Import semantics need agreement: partial-update versus complete-snapshot files; absent-row deletion; older/newer import precedence; deletion restoration; bulk approval partial-success policy.

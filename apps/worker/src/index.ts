@@ -79,7 +79,7 @@ try {
         const path = new URL(request.url).pathname;
         if (path === "/health") return Response.json({ status: "ok" });
         if (path === "/ready") {
-          const health = await checkReadiness(redis);
+          const health = await checkReadiness(redis, consumer, shuttingDown);
           return Response.json(health, { status: health.status === "ok" ? 200 : 503 });
         }
         return new Response("Not found", { status: 404 });

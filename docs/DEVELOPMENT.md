@@ -252,6 +252,10 @@ Every parse attempt claims a fresh UUID `parseRunId` while locking the Import. E
 
 Malformed files and resource-limit failures are permanent and fail before first-pass writes. Transient failures retry three times with exponential backoff; worker death uses BullMQ stalled-job recovery. Partial second-pass rows remain as immutable `PENDING` evidence, with Import still `PROCESSING`, a known total, and an error reason until recovery or terminal failure. A failed import can retain partial evidence and must never be treated as a complete catalog input. The dispatcher also reconciles failed queue jobs if a worker could not record its exhausted-retry status.
 
+The parse consumer sets a 15-second Redis socket-response timeout, inherited by BullMQ's dedicated blocking connection. A TCP connect timeout alone does not bound initialization replies: an interrupted handshake under the verified Bun runtime could leave both consumer connections in `connect` indefinitely. The response timeout destroys the stalled socket and lets normal ioredis reconnection resume the existing consumer; no consumer recreation is used. It exceeds BullMQ's current maximum ten-second blocking wait. Recovery time depends on when the interruption occurs, reconnect backoff and any job-lock expiry; fifteen seconds is not an end-to-end recovery guarantee.
+
+The socket-interruption regression runs the real consumer and readiness check in a Bun child process behind an isolated TCP proxy. It checks two outages, a pending import, resumption in the same process/consumer, exact row counts, unchanged partial evidence, duplicate delivery, readiness transitions, healthy idle blocking beyond fifteen seconds without reconnect churn, and graceful SIGTERM shutdown. It owns its PostgreSQL fixtures and queue and never stops or flushes shared Redis.
+
 Storage and PostgreSQL do not share a transaction. A crash or ambiguous registration commit can leave unreferenced originals; retaining a possibly referenced file is safer than deleting source evidence. A confirmed duplicate request removes its unused file. Automated orphan retention/cleanup, import deletion APIs, and operator retry controls are deferred.
 
 ### Deployment blockers
@@ -269,9 +273,9 @@ curl --fail http://localhost:3001/health
 curl --fail http://localhost:3001/ready
 ```
 
-Healthy endpoints return `{"status":"ok"}`. Liveness means the process can respond; readiness checks required dependencies. Web readiness checks PostgreSQL; worker readiness checks PostgreSQL and Redis. Unavailable dependencies produce HTTP 503 with a generic response rather than connection strings or database error details.
+Healthy endpoints return `{"status":"ok"}`. Liveness means the process can respond; readiness checks required dependencies. Web readiness checks PostgreSQL; worker readiness checks PostgreSQL and Redis. When ingestion is enabled, worker readiness also requires a running, unpaused, nonclosing consumer, ready command and blocking connections, and a consumer command-connection PING bounded to one second. The blocking connection is inspected without placing health commands behind its blocking read. Shutdown and unavailable dependencies/consumer produce HTTP 503 with a generic response rather than connection strings or database error details. Readiness checks current availability, not an import completion or throughput guarantee.
 
-For a manual failure check, stop PostgreSQL and expect web readiness 503 while web liveness and the dashboard shell remain available with data-loading errors. Stop Redis and expect worker readiness 503 while worker liveness remains available. Restore infrastructure; a running worker reconnects, while one that failed startup needs restarting. Readiness alone does not establish import recovery.
+For a manual failure check, stop PostgreSQL and expect web readiness 503 while web liveness and the dashboard shell remain available with data-loading errors. Stop Redis and expect worker readiness 503 while worker liveness remains available. Only stop shared services when no other work depends on them; the automated socket regression interrupts its private proxy instead. Restore infrastructure; a running worker reconnects, while one that failed startup needs restarting. A separate Redis PING succeeding is insufficient evidence that the ingestion consumer recovered; verify queued work and durable import results too.
 
 ## Tests and local checks
 
@@ -288,6 +292,10 @@ Unit tests cover configuration defaults, credential-safe errors, CSV/XLSX polici
 Dashboard tests use React Testing Library, user-event, and jsdom under the existing Vitest unit command. They cover upload validation, stable retry keys and intentional new attempts, overlapping submission prevention, pagination, actual failure/unknown-total states, escaped/expandable source values, polling cleanup/backoff, stale responses, and hidden/offline suspension. API integration tests additionally cover supplier isolation, pagination boundaries, and localhost/127.0.0.1 Host/Origin handling. For manual checks, use Tab/Enter to navigate the supplier/file controls, upload a valid and a malformed spreadsheet, inspect duplicate headers and long values, and navigate source pages. Test mobile/tablet/desktop widths; horizontal table scrolling should remain inside its focusable region.
 
 The smoke test separately checks Bun/BullMQ connectivity. The production build checks Next.js compilation and types; production import APIs are disabled. Tests establish these ingestion behaviors, not catalog-generation accuracy, throughput guarantees, storefront performance under load, or provider costs.
+
+### Follow-up: intermittent ingestion test failures
+
+Investigate intermittent failures in `tests/ingestion.integration.test.ts`: the XLSX coordinate/metadata test sometimes reports `MALFORMED_XLSX`, and the empty-upload validation test sometimes returns HTTP 400 instead of the expected 422. The XLSX failure also reproduced against an unchanged `bf448cc` snapshot; isolated reruns and the final complete suite passed. The causes remain unresolved. Preserve these assertions and investigate parser/multipart behavior and test isolation before treating repeated runs as consistently reliable. No parser or upload-validation changes were made with the Redis recovery fix.
 
 ## Recorded local verification
 
