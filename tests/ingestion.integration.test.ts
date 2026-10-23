@@ -10,6 +10,7 @@ import { importEndpoint } from "@catalogforge/ingestion/http";
 import { LIMITS } from "@catalogforge/ingestion/contracts";
 import ExcelJS from "exceljs";
 import { Readable } from "node:stream";
+import { suppliersSchema, historySchema, detailsSchema } from "@catalogforge/ingestion/api-contracts";
 
 const db = getDb();
 let storeId: string;
@@ -209,6 +210,52 @@ describe("local import HTTP contract", () => {
     form.set("idempotencyKey", key);
     return new Request("http://localhost:3000/api/imports", { method: "POST", body: form });
   }
+  it("paginates supplier choices without exposing another store or private fields", async () => {
+    await db.supplier.create({ data: { storeId, name: "Another supplier" } });
+    const other = await db.store.create({ data: { name: "Other" } }); stores.push(other.id);
+    await db.supplier.create({ data: { storeId: other.id, name: "Private supplier" } });
+    const page = (number: number) => importEndpoint(new Request(`http://localhost:3000/api/suppliers?page=${number}&pageSize=1`), undefined, "suppliers");
+    const first = await page(1);
+    expect(first.status).toBe(200); expect(first.headers.get("cache-control")).toBe("no-store");
+    const one = suppliersSchema.parse(await first.json());
+    const two = suppliersSchema.parse(await (await page(2)).json());
+    expect(one.hasMore).toBe(true); expect(two.hasMore).toBe(false);
+    expect(one.suppliers[0]?.id).not.toBe(two.suppliers[0]?.id);
+    expect([...one.suppliers, ...two.suppliers].map((supplier) => supplier.name)).toEqual(["Another supplier", "Test supplier"]);
+    expect(await (await page(3)).json()).toMatchObject({ suppliers: [], hasMore: false });
+    expect((await importEndpoint(new Request("http://localhost:3000/api/suppliers?pageSize=101"), undefined, "suppliers")).status).toBe(400);
+  });
+  it("protects supplier reads with the same local development and origin restrictions", async () => {
+    const read = (url = "http://localhost:3000/api/suppliers", headers = {}) => importEndpoint(new Request(url, { headers }), undefined, "suppliers");
+    vi.stubEnv("NODE_ENV", "production"); expect((await read()).status).toBe(404);
+    vi.stubEnv("NODE_ENV", "development"); vi.stubEnv("VERCEL", "1"); expect((await read()).status).toBe(404);
+    vi.stubEnv("VERCEL", ""); vi.stubEnv("DEV_INGESTION_ENABLED", "false"); expect((await read()).status).toBe(404);
+    vi.stubEnv("DEV_INGESTION_ENABLED", "true"); expect((await read("http://example.com/api/suppliers")).status).toBe(403);
+    expect((await read(undefined, { origin: "https://example.com" })).status).toBe(403);
+    expect((await importEndpoint(new Request("http://localhost:3000/api/suppliers", { method: "POST" }), undefined, "suppliers")).status).toBe(405);
+  });
+  it("uses the validated browser host when Next.js canonicalizes its request URL", async () => {
+    const request = (host: string, origin: string) => new Request("http://localhost:3000/api/suppliers", { headers: { host, origin } });
+    expect((await importEndpoint(request("127.0.0.1:3000", "http://127.0.0.1:3000"), undefined, "suppliers")).status).toBe(200);
+    expect((await importEndpoint(request("localhost:3000", "http://localhost:3000"), undefined, "suppliers")).status).toBe(200);
+    for (const [host, origin] of [["evil.example:3000", "http://evil.example:3000"], ["127.0.0.1:3001", "http://127.0.0.1:3001"], ["127.0.0.1:3000", "http://localhost:3000"], ["127.0.0.1:3000", "https://evil.example"]]) {
+      expect((await importEndpoint(request(host!, origin!), undefined, "suppliers")).status).toBe(403);
+    }
+  });
+  it("returns precise hasMore for full history pages and bounded source pages", async () => {
+    const one = await register(csv); const two = await register(csv);
+    const first = historySchema.parse(await (await importEndpoint(new Request("http://localhost:3000/api/imports?page=1&pageSize=1"))).json());
+    const last = historySchema.parse(await (await importEndpoint(new Request("http://localhost:3000/api/imports?page=2&pageSize=1"))).json());
+    expect(first.imports).toHaveLength(1); expect(first.hasMore).toBe(true);
+    expect(last.imports).toHaveLength(1); expect(last.hasMore).toBe(false);
+    expect(new Set([first.imports[0]?.id, last.imports[0]?.id])).toEqual(new Set([one.id, two.id]));
+    await processParseImport(one.id, storeId, storage);
+    const get = async (page: number) => detailsSchema.parse(await (await importEndpoint(new Request(`http://localhost:3000/api/imports?page=${page}&pageSize=2`), one.id)).json());
+    expect((await get(1)).rows.map((row) => row.rowNumber)).toEqual([2, 3]);
+    expect((await get(2)).rows.map((row) => row.rowNumber)).toEqual([4]);
+    expect((await get(3)).rows).toEqual([]);
+    expect((await get(2)).imported._count.sourceRows).toBe(3);
+  });
   it("accepts uploads, returns scoped paginated details and omits private storage metadata", async () => {
     const response = await importEndpoint(upload());
     expect(response.status).toBe(202);

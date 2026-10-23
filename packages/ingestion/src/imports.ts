@@ -51,12 +51,20 @@ export async function registerImport(storage: OriginalStorage, input: {
 const summarySelect = {
   id: true, supplierId: true, originalFilename: true, status: true, totalRows: true,
   errorCode: true, errorMessage: true, createdAt: true, startedAt: true, finishedAt: true,
-  _count: { select: { sourceRows: true } }
+  _count: { select: { sourceRows: true } },
+  supplier: { select: { name: true } }
 } as const;
 
 export async function listImports(storeId: string, page: number, pageSize: number) {
-  return getDb().import.findMany({ where: { storeId }, select: summarySelect,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize });
+  const items = await getDb().import.findMany({ where: { storeId }, select: summarySelect,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * pageSize, take: pageSize + 1 });
+  return { imports: items.slice(0, pageSize), hasMore: items.length > pageSize };
+}
+
+export async function listSuppliers(storeId: string, page: number, pageSize: number) {
+  const items = await getDb().supplier.findMany({ where: { storeId }, select: { id: true, name: true },
+    orderBy: [{ name: "asc" }, { id: "asc" }], skip: (page - 1) * pageSize, take: pageSize + 1 });
+  return { suppliers: items.slice(0, pageSize), hasMore: items.length > pageSize };
 }
 
 export async function importDetails(storeId: string, id: string, page: number, pageSize: number) {

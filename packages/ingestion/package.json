@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./api-contracts": "./src/api-contracts.ts",
     "./contracts": "./src/contracts.ts",
     "./storage": "./src/storage.ts",
     "./parser": "./src/parser.ts",

@@ -8,7 +8,7 @@ Supplier files often contain inconsistent prices, repeated rows, incomplete vari
 
 **Implemented**
 
-- A Next.js application with a placeholder homepage and health endpoints.
+- A responsive supplier-import dashboard with file picker/drag-and-drop upload, import history, and original-row previews.
 - A development-only CSV/XLSX upload API with private original-file preservation, asynchronous parsing, and paginated import details.
 - An independent worker with durable PostgreSQL dispatch, BullMQ retries, and restart-safe source-row persistence.
 - Supplier/source and product/revision database models with scoped relationships, canonical SKU uniqueness, protected original rows, and separate catalog snapshots.
@@ -78,7 +78,7 @@ In a separate terminal:
 bun run dev:worker
 ```
 
-Open [localhost:3000](http://localhost:3000) for the placeholder homepage. Stop applications with Ctrl+C; use `bun run infra:down` to stop local services while retaining their data. See the [development guide](./docs/DEVELOPMENT.md) for environment settings, migrations, and troubleshooting.
+Open [localhost:3000](http://localhost:3000) for the supplier-import dashboard. Stop applications with Ctrl+C; use `bun run infra:down` to stop local services while retaining their data. See the [development guide](./docs/DEVELOPMENT.md) for environment settings, migrations, and troubleshooting.
 
 To try ingestion, follow the [local upload setup and curl example](./docs/DEVELOPMENT.md#local-spreadsheet-ingestion). It requires explicit opt-in and a seeded store/supplier. These unauthenticated APIs are disabled in production and on Vercel.
 
@@ -92,7 +92,7 @@ bun run lint
 bun run build
 ```
 
-Unit tests cover environment validation, parsing policies, file limits, and local storage. Integration tests cover database constraints, upload APIs, two-pass persistence, idempotency, dispatch outages, and recovery after parser process termination. They require PostgreSQL with migrations applied and Redis, and clean up isolated fixtures and queues.
+Unit/component tests cover environment validation, parsing, local storage, upload retries, polling, pagination, and safe source rendering. Integration tests cover database constraints, scoped supplier/import APIs, two-pass persistence, idempotency, dispatch outages, and recovery after parser process termination. They require PostgreSQL with migrations applied and Redis, and clean up isolated fixtures and queues.
 
 `bun run worker:smoke` separately verifies a BullMQ job and Prisma query under Bun. These checks do not establish the accuracy or performance of the future catalog pipeline.
 
@@ -108,4 +108,4 @@ Idempotent catalog writes, evidence-backed AI claims, and merchant approval/publ
 
 ## Current Limitations
 
-The web page remains a placeholder; ingestion is available through local APIs only. Normalization, product grouping, photo processing, AI generation, translation, merchant review/publication, storefront pages, exports, and cost reporting are not implemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No throughput, storefront-load, accuracy, or cost benchmarks are available.
+The dashboard and ingestion APIs are restricted to local development. Normalization, product grouping, photo processing, AI generation, translation, merchant review/publication, storefront pages, exports, and cost reporting are not implemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.

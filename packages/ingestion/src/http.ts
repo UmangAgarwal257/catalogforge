@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { IngestionError, LIMITS, localSettingsSchema } from "./contracts";
 import { LocalOriginalStorage } from "./storage";
-import { importDetails, listImports, registerImport } from "./imports";
+import { importDetails, listImports, listSuppliers, registerImport } from "./imports";
 
 export function developmentConfig() {
   if (process.env.NODE_ENV !== "development" || process.env.DEV_INGESTION_ENABLED !== "true" || process.env.VERCEL) {
@@ -14,10 +14,17 @@ export function developmentConfig() {
 
 function checkBrowserOrigin(request: Request): void {
   const target = new URL(request.url);
-  const allowedHost = ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
-  if (!allowedHost) throw new IngestionError("LOCAL_ONLY", "Use the local development server on localhost.", 403);
+  const loopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+  // Next.js may canonicalize Request.url to localhost even when the browser used
+  // 127.0.0.1. Compare Origin with the actual, independently validated HTTP host.
+  let browserTarget: URL;
+  try { browserTarget = new URL(`${target.protocol}//${request.headers.get("host") ?? target.host}`); }
+  catch { throw new IngestionError("LOCAL_ONLY", "Use the local development server on localhost.", 403); }
+  if (!loopback(target.hostname) || !loopback(browserTarget.hostname) || browserTarget.port !== target.port || browserTarget.username || browserTarget.password) {
+    throw new IngestionError("LOCAL_ONLY", "Use the local development server on localhost.", 403);
+  }
   const origin = request.headers.get("origin");
-  if (origin && origin !== target.origin) throw new IngestionError("CROSS_ORIGIN", "Cross-origin access to the local import API is not allowed.", 403);
+  if (origin && origin !== browserTarget.origin) throw new IngestionError("CROSS_ORIGIN", "Cross-origin access to the local import API is not allowed.", 403);
   if (request.headers.get("sec-fetch-site") === "cross-site") throw new IngestionError("CROSS_ORIGIN", "Cross-site import requests are not allowed.", 403);
 }
 
@@ -51,17 +58,21 @@ async function boundedFormData(request: Request): Promise<FormData> {
   } catch { throw new IngestionError("INVALID_MULTIPART", "Upload form-data could not be read.", 400); }
 }
 
-export async function importEndpoint(request: Request, id?: string): Promise<Response> {
+export async function importEndpoint(request: Request, id?: string, resource: "imports" | "suppliers" = "imports"): Promise<Response> {
   try {
     const config = developmentConfig();
     checkBrowserOrigin(request);
     const { page, pageSize } = pageArguments(request);
+    if (resource === "suppliers") {
+      if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
+      return Response.json({ ...await listSuppliers(config.DEV_STORE_ID, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (request.method === "GET") {
       if (id) {
         if (!z.uuid().safeParse(id).success) throw new IngestionError("INVALID_ID", "Import ID must be a UUID.", 400);
         return Response.json(await importDetails(config.DEV_STORE_ID, id, page, pageSize), { headers: { "Cache-Control": "no-store" } });
       }
-      return Response.json({ imports: await listImports(config.DEV_STORE_ID, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ ...await listImports(config.DEV_STORE_ID, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
     }
     const form = await boundedFormData(request);
     const uploads = form.getAll("file");

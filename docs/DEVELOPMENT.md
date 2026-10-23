@@ -206,6 +206,16 @@ bun run dev
 
 Run `bun run dev:worker` in another terminal. Restart both processes after environment changes. The seed creates only the configured development store/supplier, refuses production/Vercel or missing opt-in, and checks existing supplier ownership. Uploads select an existing supplier by UUID within the configured store; no supplier creation or authentication endpoint is included.
 
+### Dashboard
+
+Open `http://localhost:3000` (or `http://127.0.0.1:3000`) with local ingestion enabled. Choose a supplier, select or drop one CSV/XLSX file, and submit. The dashboard validates extension, nonempty content, and the 10 MiB limit before submission; server parsing remains authoritative. If no suppliers exist, run the development seed and use **Refresh suppliers**. Supplier choices come from a read-only, store-scoped `GET /api/suppliers?page=1&pageSize=25`; it shares the import API's local-development guards and returns IDs/names only. The origin check validates the HTTP Host independently because Next.js may canonicalize the request URL to localhost when the browser uses 127.0.0.1; remote hosts, different-origin requests, and production access remain rejected.
+
+Each file/supplier attempt retains one UUID across unsuccessful or ambiguous submissions. **Retry upload** reuses that key; changing the selected file/supplier or explicitly choosing **Start new import** resets it. Controls prevent overlapping submissions. Keys and file selections live in the mounted browser page, not persistent browser storage: after an uncertain response, retry before reloading. If the page was closed or reloaded, inspect history before intentionally submitting another import.
+
+History uses server pagination (ten imports per page) and an additive `hasMore` response field calculated by fetching one extra record. Source previews use ten or 25 saved records per page and group them by sheet index. Duplicate headers retain column-position labels; source row numbers are physical coordinates. Long values and headers expand through native keyboard-accessible disclosure controls, with the complete original value available. Supplier HTML is escaped text, and structured values/metadata are displayed as JSON. No editing, normalization, or HTML execution occurs.
+
+Active history/detail views poll every three seconds without overlapping requests. Failures back off to six/twelve seconds (capped at fifteen) and stop automatic retries after three consecutive failures; **Try again** or Refresh resumes. Polling pauses while hidden/offline, resumes on return, and aborts stale requests on navigation/unmount. Terminal imports stop scheduled polling. History shows active imports on the current page; refresh history to discover imports submitted elsewhere. Counts show saved source rows and the known total, or explicitly say the total is unknown; there are no percentages or timing estimates. `COMPLETED` means ingestion only, with SourceRows still `PENDING`. Failed imports can show partial evidence and a corrective error message.
+
 ### Manual upload and status
 
 Use a CSV/XLSX file on your machine and the configured supplier UUID:
@@ -218,7 +228,7 @@ curl --fail-with-body http://localhost:3000/api/imports \
 curl --fail-with-body 'http://localhost:3000/api/imports?page=1&pageSize=25'
 ```
 
-The example file path is an argument to replace with your actual spreadsheet path. Copy the returned `importId` into `GET /api/imports/{importId}?page=1&pageSize=25` to inspect status, durable total, persisted row count, issues, and ordered source cells. Listing and detail pages allow `pageSize` 1–100 and always use the configured store. They omit private storage keys and parse tokens. There is no upload UI or SSE yet; poll the detail endpoint while parsing runs.
+The example file path is an argument to replace with your actual spreadsheet path. Copy the returned `importId` into `GET /api/imports/{importId}?page=1&pageSize=25` to inspect status, durable total, persisted row count, issues, and ordered source cells. Listing and detail pages allow `pageSize` 1–100 and always use the configured store. They omit private storage keys and parse tokens. The dashboard polls these endpoints; SSE is not implemented.
 
 POST returns 202 after original storage and PostgreSQL registration, before parsing. Repeating the same supplier/key, filename, bytes, and parser version returns the existing import (200); different upload metadata under the same key returns 409. Use a new key for intentional reprocessing, including a permanently failed import. Identical file hashes are allowed and do not establish catalog identity. Upload validation errors use actionable 400/413/415/422 responses; malformed spreadsheet content found asynchronously appears as a failed import with an error code/message.
 
@@ -261,7 +271,7 @@ curl --fail http://localhost:3001/ready
 
 Healthy endpoints return `{"status":"ok"}`. Liveness means the process can respond; readiness checks required dependencies. Web readiness checks PostgreSQL; worker readiness checks PostgreSQL and Redis. Unavailable dependencies produce HTTP 503 with a generic response rather than connection strings or database error details.
 
-For a manual failure check, stop PostgreSQL and expect web readiness 503 while web liveness and the placeholder page remain available. Stop Redis and expect worker readiness 503 while worker liveness remains available. Restore infrastructure; a running worker reconnects, while one that failed startup needs restarting. Readiness alone does not establish import recovery.
+For a manual failure check, stop PostgreSQL and expect web readiness 503 while web liveness and the dashboard shell remain available with data-loading errors. Stop Redis and expect worker readiness 503 while worker liveness remains available. Restore infrastructure; a running worker reconnects, while one that failed startup needs restarting. Readiness alone does not establish import recovery.
 
 ## Tests and local checks
 
@@ -274,6 +284,8 @@ bun run build
 ```
 
 Unit tests cover configuration defaults, credential-safe errors, CSV/XLSX policies and limits, physical coordinates, cell validation, and private local storage. Integration tests require healthy PostgreSQL/Redis and applied migrations; unavailable infrastructure fails rather than silently skips them. They cover existing schema guarantees plus upload registration/API restrictions, concurrent idempotency, immutable metadata, two-pass persistence, exact totals, 10,000-record insertion, retries, run supersession, Redis dispatch failure/lost queue data, and recovery after a real child parser receives SIGKILL. Tests own their store fixtures, temporary directories, and uniquely named Redis queues; they never flush shared Redis or reset the database.
+
+Dashboard tests use React Testing Library, user-event, and jsdom under the existing Vitest unit command. They cover upload validation, stable retry keys and intentional new attempts, overlapping submission prevention, pagination, actual failure/unknown-total states, escaped/expandable source values, polling cleanup/backoff, stale responses, and hidden/offline suspension. API integration tests additionally cover supplier isolation, pagination boundaries, and localhost/127.0.0.1 Host/Origin handling. For manual checks, use Tab/Enter to navigate the supplier/file controls, upload a valid and a malformed spreadsheet, inspect duplicate headers and long values, and navigate source pages. Test mobile/tablet/desktop widths; horizontal table scrolling should remain inside its focusable region.
 
 The smoke test separately checks Bun/BullMQ connectivity. The production build checks Next.js compilation and types; production import APIs are disabled. Tests establish these ingestion behaviors, not catalog-generation accuracy, throughput guarantees, storefront performance under load, or provider costs.
 

@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "CatalogForge",
-  description: "CatalogForge development foundation"
+  description: "CatalogForge supplier spreadsheet ingestion"
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,10 +1,13 @@
 import { z } from "zod";
 import { isAbsolute } from "node:path";
+import { MAX_UPLOAD_BYTES } from "./api-contracts";
+export { rawCellSchema } from "./api-contracts";
+import { rawCellSchema } from "./api-contracts";
 
 export const localSettingsSchema = z.object({ DEV_STORE_ID: z.uuid(), LOCAL_UPLOAD_DIR: z.string().refine(isAbsolute) });
 
 export const LIMITS = {
-  fileBytes: 10 * 1024 * 1024,
+  fileBytes: MAX_UPLOAD_BYTES,
   records: 10000,
   columns: 256,
   cellChars: 65536,
@@ -19,12 +22,6 @@ export class IngestionError extends Error {
     this.name = "IngestionError";
   }
 }
-export const rawCellSchema = z.object({
-  columnIndex: z.number().int().min(0),
-  header: z.string().nullable(),
-  value: z.json(),
-  metadata: z.record(z.string(), z.json()).optional()
-});
 export const parsedRowSchema = z.object({
   sheetIndex: z.number().int().min(0),
   sheetName: z.string(),
