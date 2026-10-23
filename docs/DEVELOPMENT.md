@@ -32,7 +32,8 @@ Ports 3000, 3001, 5432, and 6379 must be free for the default configuration. If 
 | [apps/worker](../apps/worker) | Independent Bun process, health endpoints, explicit smoke job |
 | [packages/db](../packages/db) | Prisma configuration, migrations, shared lazy database client |
 | [packages/shared](../packages/shared) | Zod environment schemas and shared health types |
-| [tests](../tests) | Database integration tests |
+| [packages/ingestion](../packages/ingestion) | Storage interface, parsers, import registration, durable dispatch, parse processing, API contracts |
+| [tests](../tests) | Database, API, and queue/recovery integration tests |
 
 Both applications import shared packages through `workspace:*` dependencies. The packages export TypeScript directly: Bun handles it for the worker, and Next.js transpiles it for the web application. No separate package build is required. Import the database package only from server-side code, never a React client component.
 
@@ -53,6 +54,9 @@ Root and workspace scripts explicitly load the local environment with Bun. Shell
 | `REDIS_URL` | Worker and BullMQ smoke test |
 | `WEB_APP_URL` | Web configuration validation; example is localhost:3000 |
 | `WORKER_HEALTH_PORT` | Worker localhost listener; default 3001 |
+| `DEV_INGESTION_ENABLED` | Explicit opt-in for local unauthenticated ingestion; default false |
+| `DEV_STORE_ID`, `DEV_SUPPLIER_ID` | Explicit development scope and seed identities; not authentication |
+| `LOCAL_UPLOAD_DIR` | Absolute private directory shared by the host web and worker processes |
 | `OPENAI_API_KEY`, `GEMINI_API_KEY` | Reserved, optional, unused |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Reserved, optional, unused |
 
@@ -119,9 +123,9 @@ Source cells use an ordered JSON array, for example:
 ]
 ```
 
-This can retain duplicate headers, column positions, and textual leading zeros. JSONB preserves array order; the future parser must supply the original values correctly. Issues are arrays of objects with codes, affected column positions, and reasons.
+This retains duplicate headers, column positions, and textual leading zeros. JSONB preserves array order; the ingestion parser validates individual entries with Zod before inserting them. Issues are arrays of objects with codes, affected column positions, and reasons.
 
-Import statuses are `PENDING`, `PROCESSING`, `PAUSED`, `COMPLETED`, and `FAILED`. Row statuses are independently `PENDING`, `PROCESSING`, `DONE`, `NEEDS_REVIEW`, and `FAILED`. Both default to `PENDING`. These enums do not enforce state transitions or progress totals, and processing completion does not imply publication or success for every row.
+Import statuses are `PENDING`, `PROCESSING`, `PAUSED`, `COMPLETED`, and `FAILED`. Ingestion uses `PENDING → PROCESSING → COMPLETED / FAILED`; `PAUSED` is reserved and has no API workflow. **Import `COMPLETED` means spreadsheet ingestion/parsing only.** Row statuses are independently `PENDING`, `PROCESSING`, `DONE`, `NEEDS_REVIEW`, and `FAILED`. Successful parsing leaves every SourceRow `PENDING` for future cleaning/catalog processing. Parse issues do not automatically change row status. The enums alone do not enforce transitions or totals.
 
 ### SQL checks and source immutability
 
@@ -131,12 +135,11 @@ A trigger on **SourceRow only** rejects changes to `id`, `importId`, `storeId`, 
 
 Prisma's model language does not express these checks or the trigger, so preserve their SQL in future migrations. Parent deletion is restricted; explicit child-first deletion remains possible: source rows → imports → suppliers → stores. Test cleanup uses this order and deletes only its own fixtures.
 
-### Future data-preservation work
+### Import metadata preservation
 
-- During upload implementation, protect original import file metadata, including `storageKey` and `fileSha256`, from silent modification after finalization. The SourceRow trigger does not protect Import metadata.
-- During spreadsheet parsing, use Zod to validate each `rawCells` entry's column position, header, and value before persistence. PostgreSQL currently validates only the outer array shape, not each cell/issue object's structure.
+The ingestion migration adds a separate Import trigger: after registration, it rejects changes to the UUID, store/supplier ownership, filename, storage key, SHA-256 hash, idempotency key, parser version, mapping configuration, and creation timestamp. Registration finalizes this metadata; there is no staged upload record. Status, run token, totals, errors, and processing timestamps remain writable. Normal child-first deletion still works.
 
-Storage keys are currently metadata references only. Full file preservation, catalog identity resolution, and processing/recovery services still need implementation. See [EDGE-CASES.md](../EDGE-CASES.md) for expected behavior and implementation status.
+Zod validates each parsed `rawCells` entry's column index, nullable header, JSON value, and optional metadata. PostgreSQL intentionally validates the outer array shape only; direct SQL/Prisma writes can still bypass nested application validation. Catalog identity resolution remains future work. See [EDGE-CASES.md](../EDGE-CASES.md) for the broader expected failure behaviors; schema or parser coverage alone does not mark an entire product scenario handled.
 
 ### Product identities, snapshots, and evidence
 
@@ -174,9 +177,9 @@ The catalog migration creates all five tables and supporting keys before adding 
 
 ## Worker lifecycle and connectivity smoke test
 
-Start the independent worker with `bun run dev:worker`; stop it with Ctrl+C. Successful startup reports PostgreSQL and Redis connectivity and states that no business jobs are running. SIGINT/SIGTERM close connections and the health listener, with a bounded shutdown deadline.
+Start the independent worker with `bun run dev:worker`; stop it with Ctrl+C. Successful startup reports PostgreSQL/Redis connectivity and whether local ingestion is enabled. SIGINT/SIGTERM stop dispatch, close the consumer/connections and health listener, with a ten-second shutdown deadline. An interrupted parse is recoverable on restart.
 
-The worker fails startup if required dependencies are unavailable. Redis reconnection is intentionally not implemented yet: restore Redis and restart the worker after a lost connection. Queue recovery and durable dispatch through a transactional outbox remain planned.
+The worker fails startup if required dependencies are unavailable. After startup, Redis connections reconnect and the dispatcher retries every five seconds; PostgreSQL retains pending work during outages. A worker that fails initial startup must be restarted after infrastructure is restored.
 
 Run the explicit development-only test with both services healthy:
 
@@ -184,7 +187,66 @@ Run the explicit development-only test with both services healthy:
 bun run worker:smoke
 ```
 
-It creates an isolated BullMQ queue, executes a Prisma PostgreSQL query through one job under Bun, and cleans up the queue. Expected output confirms the BullMQ smoke job completed. The ordinary worker does not start this consumer; the smoke command refuses to run with `NODE_ENV=production`.
+It creates an isolated BullMQ queue, executes a Prisma PostgreSQL query through one job under Bun, and cleans up the queue. Expected output confirms the smoke job completed. It is separate from the ordinary ingestion consumer and refuses `NODE_ENV=production`.
+
+## Local spreadsheet ingestion
+
+### Enable and seed
+
+The unauthenticated import API requires `NODE_ENV=development` (set by Next.js development mode), `DEV_INGESTION_ENABLED=true`, a valid `DEV_STORE_ID`, and an absolute `LOCAL_UPLOAD_DIR`. It rejects production/Vercel, non-loopback URL hosts, and cross-origin browser requests. Keep the development server on its default loopback binding; never expose it through a public tunnel or proxy. These restrictions are a local development guard, not authentication.
+
+In the root `.env`, enable ingestion, set `LOCAL_UPLOAD_DIR` to the absolute path of this checkout's `.local/uploads`, and retain the example development store/supplier UUIDs or choose your own. Then:
+
+```bash
+bun run db:deploy
+bun run db:generate
+bun run db:seed:dev
+bun run dev
+```
+
+Run `bun run dev:worker` in another terminal. Restart both processes after environment changes. The seed creates only the configured development store/supplier, refuses production/Vercel or missing opt-in, and checks existing supplier ownership. Uploads select an existing supplier by UUID within the configured store; no supplier creation or authentication endpoint is included.
+
+### Manual upload and status
+
+Use a CSV/XLSX file on your machine and the configured supplier UUID:
+
+```bash
+curl --fail-with-body http://localhost:3000/api/imports \
+  -F 'supplierId=00000000-0000-4000-8000-000000000002' \
+  -F 'idempotencyKey=local-upload-1' \
+  -F 'file=@/absolute/path/to/supplier.csv'
+curl --fail-with-body 'http://localhost:3000/api/imports?page=1&pageSize=25'
+```
+
+The example file path is an argument to replace with your actual spreadsheet path. Copy the returned `importId` into `GET /api/imports/{importId}?page=1&pageSize=25` to inspect status, durable total, persisted row count, issues, and ordered source cells. Listing and detail pages allow `pageSize` 1–100 and always use the configured store. They omit private storage keys and parse tokens. There is no upload UI or SSE yet; poll the detail endpoint while parsing runs.
+
+POST returns 202 after original storage and PostgreSQL registration, before parsing. Repeating the same supplier/key, filename, bytes, and parser version returns the existing import (200); different upload metadata under the same key returns 409. Use a new key for intentional reprocessing, including a permanently failed import. Identical file hashes are allowed and do not establish catalog identity. Upload validation errors use actionable 400/413/415/422 responses; malformed spreadsheet content found asynchronously appears as a failed import with an error code/message.
+
+### Storage and parsing policies
+
+`OriginalStorage` exposes `save`, `open`, and `remove` using opaque keys. The development adapter stores complete files under random UUID keys, publishes through an atomic hard link, and creates private files/directories (0600/0700). No upload directory is served by Next.js; originals have no public download endpoint. Parsing reads through the interface, never a filesystem path, and verifies the finalized SHA-256 hash before each pass. The web and worker must use the same absolute directory on one host. Files persist independently of Docker volumes; do not delete this directory to troubleshoot an import.
+
+Limits: 10 MiB per original, 10,000 accepted nonblank data records across all sheets, 256 columns, 100 worksheets, 100,000 physical rows per sheet, 64 KiB serialized cell characters, and a 64 MiB serialized evidence-character budget. XLSX ZIP directory checks additionally cap entries at 2,000 and declared expanded bytes at 64 MiB. These supplementary safety limits reject wide/sparse or unusually large workbooks even below the record limit. The declared ZIP expansion check is not a complete defense against hostile archives with dishonest metadata; production needs resource isolation and stronger decompression/time limits.
+
+- CSV uses Papa Parse with UTF-8/BOM support, comma/semicolon detection, ordered arrays, and dynamic typing disabled. Ambiguous delimiters require correction. Physical row numbers identify each record's starting line, including quoted multiline records and blank lines. The first nonblank record is the header. Duplicate/blank headers are retained; uneven row widths retain extra/missing cells and add an issue.
+- XLSX uses ExcelJS's streaming reader, retains workbook sheet order/names and physical row numbers, and treats the first nonblank row of each sheet as its header. Blank/header-only sheets contribute no records. Completely empty files/workbooks fail; header-only input completes with zero rows.
+- Blank rows, including whitespace-only cells, are skipped; the byte-exact original retains them. Textual leading-zero SKUs remain strings. Numeric Excel cells remain numeric with available number-format/type metadata; no SKU reconstruction or unit/price normalization occurs.
+- Dates are serialized as ISO text; formulas/shared formulas and cached results remain structured evidence with an untrusted-formula issue. Formulas are never executed or treated as instructions. Source rows capture relevant parsed values/metadata, not every workbook formatting feature; the original file is the authoritative complete evidence.
+- Each ordered cell is Zod-validated before persistence. Header duplicates use positions rather than object keys. Source values, identities, fingerprints, and coordinates are never updated on retry.
+
+### Durable dispatch, retries, and partial failure
+
+Registration saves the original first, then commits Import and its one-to-one `ParseDispatch` outbox record in the same PostgreSQL transaction. Redis is not needed to accept an upload. A worker scans nonterminal dispatch records in bounded pages, adds a BullMQ job keyed by import UUID, and records its dispatch timestamp. The timestamp is not a permanent acknowledgement: rescanning recreates missing Redis jobs, so Redis loss does not lose PostgreSQL intent. Completed/failed imports are not automatically restarted. Outbox rows are retained for reconciliation and cascade only when their Import is explicitly deleted.
+
+Every parse attempt claims a fresh UUID `parseRunId` while locking the Import. Each write batch locks and checks that token; a superseded worker cannot write more rows or change terminal status. Pass one validates/counts the complete file without source-row writes. Pass two re-reads and verifies the hash, then persists batches of at most 250. PostgreSQL coordinate uniqueness prevents duplicates; existing evidence must exactly match its deterministic reparse or the import fails without overwriting evidence. Completion checks both the validated count and actual persisted count.
+
+Malformed files and resource-limit failures are permanent and fail before first-pass writes. Transient failures retry three times with exponential backoff; worker death uses BullMQ stalled-job recovery. Partial second-pass rows remain as immutable `PENDING` evidence, with Import still `PROCESSING`, a known total, and an error reason until recovery or terminal failure. A failed import can retain partial evidence and must never be treated as a complete catalog input. The dispatcher also reconciles failed queue jobs if a worker could not record its exhausted-retry status.
+
+Storage and PostgreSQL do not share a transaction. A crash or ambiguous registration commit can leave unreferenced originals; retaining a possibly referenced file is safer than deleting source evidence. A confirmed duplicate request removes its unused file. Automated orphan retention/cleanup, import deletion APIs, and operator retry controls are deferred.
+
+### Deployment blockers
+
+Local filesystem storage is development-only and does not work as durable shared storage on Vercel or across separate web/worker hosts. Production requires a shared private storage adapter accessible to both processes (planned: Supabase Storage), plus authentication or properly scoped demo access, request limits, resource quotas, and hardened parser resource isolation. The configured store UUID is an ownership scope only. Supabase Storage, full authentication, AI jobs, and all downstream catalog workflows are intentionally absent.
 
 ## Health and readiness
 
@@ -199,7 +261,7 @@ curl --fail http://localhost:3001/ready
 
 Healthy endpoints return `{"status":"ok"}`. Liveness means the process can respond; readiness checks required dependencies. Web readiness checks PostgreSQL; worker readiness checks PostgreSQL and Redis. Unavailable dependencies produce HTTP 503 with a generic response rather than connection strings or database error details.
 
-For a manual failure check, stop PostgreSQL and expect web readiness 503 while web liveness and the placeholder page remain available. Stop Redis and expect worker readiness 503 while worker liveness remains available. Restore infrastructure and restart the worker. These checks establish dependency reporting, not import recovery.
+For a manual failure check, stop PostgreSQL and expect web readiness 503 while web liveness and the placeholder page remain available. Stop Redis and expect worker readiness 503 while worker liveness remains available. Restore infrastructure; a running worker reconnects, while one that failed startup needs restarting. Readiness alone does not establish import recovery.
 
 ## Tests and local checks
 
@@ -211,9 +273,9 @@ bun run lint
 bun run build
 ```
 
-Unit tests cover configuration defaults, invalid/missing values, and credential-safe error messages. Integration tests require healthy PostgreSQL and applied migrations; unavailable infrastructure fails rather than silently skips them. They cover the foundation probe, scoped foreign keys, request/coordinate uniqueness, concurrent duplicate requests, ordered source preservation, status independence, SQL checks, blocked source edits, allowed processing updates, and cleanup.
+Unit tests cover configuration defaults, credential-safe errors, CSV/XLSX policies and limits, physical coordinates, cell validation, and private local storage. Integration tests require healthy PostgreSQL/Redis and applied migrations; unavailable infrastructure fails rather than silently skips them. They cover existing schema guarantees plus upload registration/API restrictions, concurrent idempotency, immutable metadata, two-pass persistence, exact totals, 10,000-record insertion, retries, run supersession, Redis dispatch failure/lost queue data, and recovery after a real child parser receives SIGKILL. Tests own their store fixtures, temporary directories, and uniquely named Redis queues; they never flush shared Redis or reset the database.
 
-The smoke test separately requires Redis. The production build checks Next.js compilation and types. No current test establishes end-to-end import accuracy, large-import recovery, throughput, storefront performance under load, or provider costs.
+The smoke test separately checks Bun/BullMQ connectivity. The production build checks Next.js compilation and types; production import APIs are disabled. Tests establish these ingestion behaviors, not catalog-generation accuracy, throughput guarantees, storefront performance under load, or provider costs.
 
 ## Recorded local verification
 

@@ -14,7 +14,8 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "clsx": "^2.1.1",
-    "tailwind-merge": "^3.0.0"
+    "tailwind-merge": "^3.0.0",
+    "@catalogforge/ingestion": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",

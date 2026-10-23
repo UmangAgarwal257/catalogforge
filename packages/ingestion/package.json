@@ -1,0 +1,24 @@
+{
+  "name": "@catalogforge/ingestion",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./contracts": "./src/contracts.ts",
+    "./storage": "./src/storage.ts",
+    "./parser": "./src/parser.ts",
+    "./imports": "./src/imports.ts",
+    "./processing": "./src/processing.ts",
+    "./queue": "./src/queue.ts",
+    "./http": "./src/http.ts"
+  },
+  "dependencies": {
+    "@catalogforge/db": "workspace:*",
+    "@catalogforge/shared": "workspace:*",
+    "bullmq": "6.4.0",
+    "ioredis": "^5.8.0",
+    "papaparse": "^5.5.3",
+    "exceljs": "^4.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": { "@types/papaparse": "^5.3.16" }
+}

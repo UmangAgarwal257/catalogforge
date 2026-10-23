@@ -4,7 +4,7 @@ import { getWebEnv } from "./src/lib/env";
 getWebEnv();
 
 const config: NextConfig = {
-  transpilePackages: ["@catalogforge/shared", "@catalogforge/db"]
+  transpilePackages: ["@catalogforge/shared", "@catalogforge/db", "@catalogforge/ingestion"]
 };
 
 export default config;

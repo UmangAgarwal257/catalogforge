@@ -2,6 +2,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { databaseEnvSchema, parseEnv } from "@catalogforge/shared";
 import { PrismaClient, type Variant } from "./generated/prisma/client";
 
+export type { Prisma } from "./generated/prisma/client";
+
 const globalDatabase = globalThis as unknown as { catalogforgeDb?: PrismaClient };
 
 export function getDb(): PrismaClient {

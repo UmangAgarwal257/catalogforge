@@ -70,7 +70,7 @@ describe("supplier ownership and import identity", () => {
   it("rejects a cross-store supplier/import relationship on insert and update", async () => {
     const otherStore = await createStore();
     await expect(db.import.create({ data: importData(otherStore.id, supplierId) })).rejects.toMatchObject({ code: "P2003" });
-    await expect(db.import.update({ where: { id: importId }, data: { storeId: otherStore.id } })).rejects.toMatchObject({ code: "P2003" });
+    await expect(db.import.update({ where: { id: importId }, data: { storeId: otherStore.id } })).rejects.toThrow(/Import source metadata is immutable/);
   });
 
   it("rejects source rows whose store differs from their import", async () => {
@@ -188,8 +188,8 @@ describe("PostgreSQL checks", () => {
   });
 
   it("rejects invalid SHA-256 values and blank request keys", async () => {
-    await expect(db.$executeRaw`UPDATE "Import" SET "fileSha256" = 'not-a-sha256' WHERE "id" = ${importId}::uuid`).rejects.toThrow(/Import_fileSha256_format/);
-    await expect(db.$executeRaw`UPDATE "Import" SET "idempotencyKey" = '   ' WHERE "id" = ${importId}::uuid`).rejects.toThrow(/Import_idempotencyKey_nonblank/);
+    await expect(db.import.create({ data: { ...importData(storeId, supplierId), fileSha256: "not-a-sha256" } })).rejects.toThrow(/Import_fileSha256_format/);
+    await expect(db.import.create({ data: { ...importData(storeId, supplierId), idempotencyKey: "   " } })).rejects.toThrow(/Import_idempotencyKey_nonblank/);
   });
 
   it("rejects negative sheet indexes and nonpositive physical rows", async () => {

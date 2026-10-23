@@ -77,14 +77,24 @@ model Import {
   createdAt        DateTime          @default(now()) @db.Timestamptz(3)
   startedAt        DateTime?         @db.Timestamptz(3)
   finishedAt       DateTime?         @db.Timestamptz(3)
+  parseRunId       String?           @db.Uuid
   store            Store             @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   supplier         Supplier          @relation(fields: [supplierId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   sourceRows       SourceRow[]
   productRevisions ProductRevision[]
+  parseDispatch    ParseDispatch?
 
   @@unique([id, storeId])
   @@unique([storeId, supplierId, idempotencyKey])
   @@index([storeId, status])
+}
+
+// Narrow parsing outbox: created atomically with an accepted Import.
+model ParseDispatch {
+  importId     String    @id @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  dispatchedAt DateTime? @db.Timestamptz(3)
+  import       Import    @relation(fields: [importId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 }
 
 model SourceRow {
