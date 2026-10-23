@@ -148,42 +148,42 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** Related variants appear out of order and in different parsing/processing batches.
 - **Application should do:** Resolve grouping across the import before finalizing product proposals, or use a durable grouping strategy that preserves the same result across batch boundaries.
 - **Why:** Batch size must not determine the merchant's product structure.
-- **Implementation status:** Not handled — grouping has not been implemented.
+- **Implementation status:** Handled and tested for explicit deterministic grouping calls — the complete selected import is planned before catalog writes; shuffled inputs and 100/1,000/10,000-row plans produce the same membership independently of processing batches. Automatic grouping jobs are not implemented.
 - **Planned test:** Shuffle identical input and change batch sizes; expect equivalent product/variant groups and complete source links.
 
 ### EC-16 — Exact duplicate rows versus conflicting duplicate SKUs
 - **What happens:** An identical row repeats, or one SKU has conflicting prices/options.
 - **Application should do:** Preserve all source rows, deduplicate effects for exact repeats, and send conflicting identities for review with both sources visible.
 - **Why:** Counting source records and creating business entities are different operations; arbitrary last-row-wins loses evidence.
-- **Implementation status:** Not handled — duplicate classification and outcome mapping have not been implemented.
+- **Implementation status:** Handled and tested for explicit grouping — repeated SKUs share one variant while all source/cleaner links remain; conflicting prices stay null in a review proposal, quantities are not summed, and cross-family SKU conflicts block affected identity writes. Durable grouping outcomes remain separate from final catalog-pipeline row status.
 - **Planned test:** Mix exact copies and SKU conflicts; expect one appropriate business identity, visible conflicts, and every input record accounted for.
 
 ### EC-17 — Uncertain product family or variant combination
 - **What happens:** Similar names suggest grouping, identifiers disagree, or two variants have the same option combination.
 - **Application should do:** Require review and expose candidate groups; do not merge on name similarity alone or invent differentiating options.
 - **Why:** False merges can sell the wrong item and are difficult to reverse safely.
-- **Implementation status:** Not handled — grouping confidence and variant uniqueness rules have not been implemented.
+- **Implementation status:** Handled and tested for deterministic explicit-family/mapping policies — similar titles do not establish identity; missing/untrusted identifiers, contradictory mappings and option collisions require review. No AI/fuzzy grouping or claim-confidence scoring is implemented. The eight-row labeled fixture has zero false automatic merges with 50% automatic coverage; see development notes for denominators.
 - **Planned test:** Supply near-identical unrelated products and colliding size/color combinations; expect blocked automatic grouping with explicit reasons.
 
 ### EC-18 — Identical file uploaded again
 - **What happens:** The same sheet is uploaded sequentially or simultaneously.
 - **Application should do:** Detect matching content within the appropriate supplier/store scope and use durable identity constraints to prevent duplicate products/variants. Reuse versus a new linked import run needs a policy.
 - **Why:** File hashes are useful for exact duplicates but must not be the sole business-identity mechanism.
-- **Implementation status:** Not handled — file deduplication and idempotent writes have not been implemented.
+- **Implementation status:** Handled and tested for catalog identity effects of explicit grouping — repeated/concurrent imports reuse scoped Product/Variant identities and keep distinct unpublished proposals per import. Same-run retries reuse the frozen input selection without duplicate revisions, snapshots or evidence. Identical bytes may intentionally create another import; no automatic grouping dispatch is implied.
 - **Planned test:** Upload identical bytes twice and concurrently; expect no duplicate catalog entities and understandable import histories.
 
 ### EC-19 — Changed rows in a later file
 - **What happens:** A supplier reorders rows, changes a price, adds a variant, or removes a row.
 - **Application should do:** Match using approved stable supplier identity, create update proposals, and retain published values until approval. Do not infer deletion from absence without a snapshot-import policy.
 - **Why:** Row numbers are not stable identities, and many supplier files are partial updates.
-- **Implementation status:** Not handled — cross-import matching and update proposals have not been implemented.
+- **Implementation status:** Handled and tested for published-baseline partial imports — stable family/SKU matching produces separate proposals, preserves published snapshots/manual ownership and carries absent variants/evidence forward. Mapped missing prices remain null. Edited drafts or absent unpublished-variant baselines require explicit merge/rebase; deletion is never inferred.
 - **Planned test:** Reorder rows and change one variant; expect updates against existing identities, no duplicates, no premature publication, and no implicit deletion.
 
 ### EC-20 — Concurrent imports finish in the wrong order
 - **What happens:** An older import completes after a newer import for the same product.
 - **Application should do:** Detect version conflicts and prevent stale automatic writes or approvals from replacing newer accepted content; expose the conflict for resolution.
 - **Why:** Completion time does not establish supplier-data precedence.
-- **Implementation status:** Not handled — concurrency control has not been implemented; precedence policy remains open.
+- **Implementation status:** Not handled end to end — grouping transactions revalidate the frozen published baseline, scope and archive state, serialize cooperating writes per store and reject stale baseline changes. Concurrent imports do not select an automatic winner or publish. Stale approval validation and supplier chronological precedence remain future publication decisions.
 - **Planned test:** Delay an older run until after a newer revision is approved; expect the approved content to remain and the stale candidate to be identified.
 
 ## D. Photos and assets
@@ -339,13 +339,20 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **Implementation status:** Handled and tested for explicit one-row service calls — integration tests cover simultaneous retries, configuration changes, version uniqueness, cross-store rejection, unchanged SourceRows/status and unchanged published product/variant snapshots. Automatic cleaning queues, bulk orchestration and grouping remain absent.
 - **Test:** `tests/cleaning.integration.test.ts` uses isolated fixtures and direct PostgreSQL constraint checks; cleaning unit tests verify the deterministic example, cell/default/transformation provenance and stable configuration hashing. Infrastructure failures propagate to the caller; no automatic scheduling or retry loop is claimed.
 
+### EC-59 — Grouping retries change selected cleaning interpretations or lose row outcomes
+- **What happens:** Mapping versions change during grouping, callers select different cleaning results on retry, or a caller fails before/after a family commit.
+- **Application should do:** Freeze exact input selections, configuration identity and the complete plan. Save per-family catalog writes and row outcomes atomically. Complete only with one terminal grouping outcome per selected physical source record; reject different retry inputs and require an explicit new import.
+- **Why:** Versioned cleaning history must remain attributable, ambiguous rows need durable outcomes without invented Product identities, and retry order must not duplicate proposals or inflate progress.
+- **Implementation status:** Handled and tested for explicit grouping service calls — PostgreSQL enforces frozen run/selection keys, exact cleaner/source/store/import links and completion totals. Integration tests cover five concurrent calls, changed selections/content/configuration, transaction rollback, interruption after commit and safe retry. No automatic grouping queue or separate grouping SIGKILL experiment is claimed.
+- **Test:** Run grouping unit/integration tests. Expect one unpublished proposal per import/product, exact row counts, unchanged source and published evidence, and recoverable PENDING work after infrastructure/caller failure. Cleaning FAILED rows cannot provide business values; content-review rows can establish identity only through reliable mapped evidence.
+
 ## G. Merchant review, updates, and deletion
 
 ### EC-40 — Merchant edits while AI is running
 - **What happens:** A merchant corrects a field before an older generation result is saved.
 - **Application should do:** Preserve field-level manual ownership and reject or flag stale automated changes rather than overwriting them.
 - **Why:** Merchant corrections take precedence regardless of job completion order.
-- **Implementation status:** Not handled — manual overrides and optimistic concurrency have not been implemented.
+- **Implementation status:** Not handled end to end — grouping preserves published manual fields/markers, records supplier disagreements and refuses existing merchant-edited drafts. Nested ownership protects the parent object conservatively. AI in-flight edit races and editing/approval APIs are not implemented.
 - **Planned test:** Delay a generation response, save a merchant edit, then release the response; expect the edit retained and any conflict visible.
 
 ### EC-41 — Approval is stale or bulk approval includes invalid products
@@ -359,14 +366,14 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A later file or AI rerun changes published text, prices, options, or images.
 - **Application should do:** Store a candidate revision for review and retain the existing published revision until merchant approval; publish each product consistently.
 - **Why:** Processing success does not authorize changing the storefront.
-- **Implementation status:** Not handled — candidate/published revision separation has not been implemented.
+- **Implementation status:** Handled and tested for deterministic grouping proposals — new revisions and complete variant snapshots are separate from the unchanged published pointer/snapshot, including partial imports and manual overrides. AI updates, storefront behavior and publication remain unimplemented.
 - **Planned test:** Reimport changed content and inspect product/collection pages before and after approval; expect no unapproved changes or mixed variant state.
 
 ### EC-43 — Deleted product returns in a supplier file
 - **What happens:** A merchant deletes a product, then an old job or reimport references it.
 - **Application should do:** Recommend retaining a deletion marker and require explicit restoration; reject stale publication attempts. Final restoration and retention policy remains unresolved.
 - **Why:** Blind recreation defeats the merchant's deletion intent.
-- **Implementation status:** Not handled — deletion markers and restoration rules have not been implemented.
+- **Implementation status:** Not handled in full — existing archived Product/Variant identifiers remain reserved and grouping refuses automatic recreation/reactivation; database/integration tests cover this. Merchant deletion/restoration UI, retention policy and stale publication rejection remain deferred.
 - **Planned test:** Delete after generation starts and reupload the original file; expect no silent storefront resurrection.
 
 ## H. Translation and country selection

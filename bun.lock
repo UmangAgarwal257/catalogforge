@@ -7,6 +7,7 @@
       "devDependencies": {
         "@catalogforge/cleaning": "workspace:*",
         "@catalogforge/db": "workspace:*",
+        "@catalogforge/grouping": "workspace:*",
         "@catalogforge/ingestion": "workspace:*",
         "@testing-library/react": "^16.3.3",
         "@testing-library/user-event": "^14.6.8",
@@ -81,6 +82,14 @@
         "prisma": "7.10.1",
       },
     },
+    "packages/grouping": {
+      "name": "@catalogforge/grouping",
+      "dependencies": {
+        "@catalogforge/cleaning": "workspace:*",
+        "@catalogforge/db": "workspace:*",
+        "zod": "^4.0.0",
+      },
+    },
     "packages/ingestion": {
       "name": "@catalogforge/ingestion",
       "dependencies": {
@@ -149,6 +158,8 @@
     "@catalogforge/cleaning": ["@catalogforge/cleaning@workspace:packages/cleaning"],
 
     "@catalogforge/db": ["@catalogforge/db@workspace:packages/db"],
+
+    "@catalogforge/grouping": ["@catalogforge/grouping@workspace:packages/grouping"],
 
     "@catalogforge/ingestion": ["@catalogforge/ingestion@workspace:packages/ingestion"],
 

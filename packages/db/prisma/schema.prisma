@@ -43,6 +43,18 @@ enum RowCleaningOutcome {
   FAILED
 }
 
+enum GroupingRunStatus {
+  PENDING
+  COMPLETED
+}
+
+enum GroupingRowOutcome {
+  PENDING
+  APPLIED
+  NEEDS_REVIEW
+  FAILED
+}
+
 model Store {
   id        String     @id @default(uuid()) @db.Uuid
   name      String
@@ -89,6 +101,7 @@ model Import {
   sourceRows       SourceRow[]
   productRevisions ProductRevision[]
   parseDispatch    ParseDispatch?
+  groupingRun      GroupingRun?
 
   @@unique([id, storeId])
   @@unique([storeId, supplierId, idempotencyKey])
@@ -120,9 +133,11 @@ model SourceRow {
   import         Import              @relation(fields: [importId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   revisionLinks  RevisionSourceRow[]
   cleaningResults RowCleaningResult[]
+  groupingResults GroupingRowResult[]
 
   // Source fields are also protected by the migration's UPDATE trigger.
   @@unique([id, storeId])
+  @@unique([id, importId, storeId])
   @@unique([importId, sheetIndex, rowNumber])
   @@index([importId, status])
 }
@@ -141,7 +156,10 @@ model RowCleaningResult {
   outcome        RowCleaningOutcome
   createdAt      DateTime           @default(now()) @db.Timestamptz(3)
   sourceRow      SourceRow          @relation(fields: [sourceRowId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  groupingResults GroupingRowResult[]
+  revisionLinks   RevisionSourceRow[]
 
+  @@unique([id, sourceRowId, storeId])
   @@unique([sourceRowId, cleanerVersion, configHash])
 }
 
@@ -185,6 +203,7 @@ model ProductRevision {
   productId               String                @db.Uuid
   storeId                 String                @db.Uuid
   originImportId          String?               @db.Uuid
+  groupingRunId           String?               @db.Uuid
   basePublishedRevisionId String?               @db.Uuid
   status                  ProductRevisionStatus @default(DRAFT)
   title                   String?
@@ -204,7 +223,10 @@ model ProductRevision {
   publishedFor            Product[]             @relation("PublishedRevision")
   variants                VariantRevision[]
   sourceRows              RevisionSourceRow[]
+  groupingRun             GroupingRun?          @relation(fields: [groupingRunId, originImportId, storeId], references: [id, importId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  groupingResults         GroupingRowResult[]
 
+  @@unique([id, groupingRunId, storeId])
   @@unique([id, productId, storeId])
   @@unique([id, storeId])
   @@unique([originImportId, productId])
@@ -224,6 +246,7 @@ model VariantRevision {
   productRevision   ProductRevision     @relation(fields: [productRevisionId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
   variant           Variant             @relation(fields: [variantId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
   sourceRows        RevisionSourceRow[]
+  groupingResults  GroupingRowResult[]
 
   @@id([productRevisionId, variantId])
   @@index([variantId])
@@ -234,10 +257,54 @@ model RevisionSourceRow {
   productRevisionId String           @db.Uuid
   variantId         String?          @db.Uuid
   storeId           String           @db.Uuid
+  cleaningResultId  String?          @db.Uuid
   sourceRow         SourceRow        @relation(fields: [sourceRowId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   productRevision   ProductRevision  @relation(fields: [productRevisionId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   variantRevision   VariantRevision? @relation(fields: [productRevisionId, variantId], references: [productRevisionId, variantId], onDelete: Restrict, onUpdate: Restrict)
+  cleaningResult    RowCleaningResult? @relation(fields: [cleaningResultId, sourceRowId, storeId], references: [id, sourceRowId, storeId], onDelete: Restrict, onUpdate: Restrict)
 
   @@id([sourceRowId, productRevisionId])
   @@index([productRevisionId, variantId])
+}
+
+// One frozen, explicitly selected cleaning interpretation per accepted import.
+model GroupingRun {
+  id             String @id @default(uuid()) @db.Uuid
+  importId       String @unique @db.Uuid
+  storeId        String @db.Uuid
+  grouperVersion String
+  configHash     String @db.VarChar(64)
+  configSnapshot Json
+  inputHash      String @db.VarChar(64)
+  plan           Json
+  status         GroupingRunStatus @default(PENDING)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt     DateTime? @db.Timestamptz(3)
+  import         Import @relation(fields: [importId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  rows           GroupingRowResult[]
+  revisions      ProductRevision[]
+
+  @@unique([importId, storeId])
+  @@unique([id, importId, storeId])
+}
+
+model GroupingRowResult {
+  runId             String @db.Uuid
+  importId          String @db.Uuid
+  storeId           String @db.Uuid
+  sourceRowId       String @db.Uuid
+  cleaningResultId  String @db.Uuid
+  groupKey          String
+  outcome           GroupingRowOutcome @default(PENDING)
+  issues            Json @default("[]")
+  productRevisionId String? @db.Uuid
+  variantId         String? @db.Uuid
+  run               GroupingRun @relation(fields: [runId, importId, storeId], references: [id, importId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  sourceRow         SourceRow @relation(fields: [sourceRowId, importId, storeId], references: [id, importId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  cleaningResult    RowCleaningResult @relation(fields: [cleaningResultId, sourceRowId, storeId], references: [id, sourceRowId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  revision          ProductRevision? @relation(fields: [productRevisionId, runId, storeId], references: [id, groupingRunId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  variantRevision   VariantRevision? @relation(fields: [productRevisionId, variantId], references: [productRevisionId, variantId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([runId, sourceRowId])
+  @@index([runId, groupKey])
 }

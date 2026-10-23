@@ -139,7 +139,7 @@ Prisma's model language does not express these checks or the trigger, so preserv
 
 The ingestion migration adds a separate Import trigger: after registration, it rejects changes to the UUID, store/supplier ownership, filename, storage key, SHA-256 hash, idempotency key, parser version, mapping configuration, and creation timestamp. Registration finalizes this metadata; there is no staged upload record. Status, run token, totals, errors, and processing timestamps remain writable. Normal child-first deletion still works.
 
-Zod validates each parsed `rawCells` entry's column index, nullable header, JSON value, and optional metadata. PostgreSQL intentionally validates the outer array shape only; direct SQL/Prisma writes can still bypass nested application validation. Catalog identity resolution remains future work. See [EDGE-CASES.md](../EDGE-CASES.md) for the broader expected failure behaviors; schema or parser coverage alone does not mark an entire product scenario handled.
+Zod validates each parsed `rawCells` entry's column index, nullable header, JSON value, and optional metadata. PostgreSQL intentionally validates the outer array shape only; direct SQL/Prisma writes can still bypass nested application validation. Explicit deterministic identity resolution is available through the grouping service below; automatic orchestration remains deferred. See [EDGE-CASES.md](../EDGE-CASES.md) for the broader expected failure behaviors; schema or parser coverage alone does not mark an entire product scenario handled.
 
 ### Product identities, snapshots, and evidence
 
@@ -153,7 +153,7 @@ Compound foreign keys enforce store and product ownership across these relations
 
 Published content lives in the selected revision and its variant snapshots. Creating or editing a separate draft does not update that selection or the previous snapshot's values. Stable Product/Variant identity fields are shared across revisions and should not be changed as part of draft-content editing.
 
-**Publication is not implemented.** The published pointer does not yet require `APPROVED` status, and approved snapshots remain directly editable through database access. No automatic approval checks, source-to-draft generation, manual-override merging, edit-version increments, stale-approval detection, or revision immutability triggers exist. `editVersion` and manual field paths store the information needed for future conditional writes and review logic; callers must not treat them as an implemented concurrency workflow. Baseline links enforce ownership, not approval status or freshness.
+**Publication is not implemented.** The published pointer does not yet require `APPROVED` status, and approved snapshots remain directly editable through database access. The explicit grouping service creates source-backed proposals, preserves manually owned baseline fields and rejects edited-draft rebases. Automatic approval checks, merchant editing APIs, edit-version increments, stale-approval detection and revision immutability triggers remain absent. `editVersion` and manual field paths store the information needed for future conditional writes and review logic; callers must not treat them as an implemented concurrency workflow. Baseline links enforce ownership, not approval status or freshness.
 
 Future publication must reject unapproved or invalid revisions and protect published product/variant snapshots from further editing. Future AI claim evidence must identify specific supporting source cells, not only source rows. Evidence attribution must also follow an explicit import/supplier policy: the current same-store foreign keys do not prevent accidental cross-supplier claims. These requirements are deferred until their respective workflows are implemented.
 
@@ -293,6 +293,80 @@ Each normalized field has evidence entries discriminated as `cell` (source UUID,
 The additive RowCleaningResult table stores the result, configuration snapshot/hash, cleaner version and timestamp. Its compound source/store foreign key prevents cross-store references, and `(sourceRowId, cleanerVersion, configHash)` is unique. Configuration hashing sorts object keys while preserving array order. The service inserts without overwriting on conflict, verifies matching existing output and retains old results when mappings/policy change. Direct SQL checks enforce basic JSON shapes, SHA-256 hash format and nonblank cleaner version; Zod validates the detailed contract. Results are insert-only through this service, not protected from arbitrary privileged SQL updates. Bump the cleaner version when normalization or sanitizer behavior changes; review lockfile upgrades accordingly. No new publishing or revision logic is involved.
 
 Cleaning unit tests cover the example, ambiguity/limits, exact conversions, HTML and provenance. [Cleaning integration tests](../tests/cleaning.integration.test.ts) verify persistence, concurrent retries, old mapping retention, source ownership/immutability and published-snapshot preservation. Use the ordinary test and integration commands below. Future scaling can paginate immutable source rows and persist independent results in bounded batches; no 100/1,000/10,000-row cleaning throughput or automatic crash-recovery orchestration is claimed here.
+
+## Deterministic grouping and draft proposals
+
+[packages/grouping](../packages/grouping) separates a pure planner from `groupImport(storeId, importId, cleaningResultIds, config)` in [persistence.ts](../packages/grouping/src/persistence.ts). Invocation is explicit: no HTTP endpoint, grouping queue, automatic bulk cleaning, review UI, AI, translation or publication has been added. Imports still mean ingestion, and SourceRow statuses/evidence are not changed by grouping.
+
+Start with a small completed import and clean each source row using the existing cleaning service. Supply exactly one selected RowCleaningResult per accepted source row, including FAILED/NEEDS_REVIEW results. Missing/duplicate selections, wrong import/store/supplier, mismatched cleaning configuration hashes and incomplete ingestion are rejected. Complete cleaning-result fingerprints are hashed page by page into a compact manifest rather than copying the full evidence/configuration graph into another import-sized JSON value. The service validates the complete selected import before creating catalog identities; it does not choose a timestamp-based “latest” cleaner result.
+
+Configuration explicitly supplies a stable namespace, optional family attribute (for example `familyId`), approved SKU-to-family mappings, missing-family policy (`REVIEW` by default, or an approved `STANDALONE` policy), option paths and selected product attributes. See [example.ts](../packages/grouping/src/example.ts). The family attribute is mapped by the cleaner like other attributes; no new cleaning fields or heuristics were introduced. Legacy unnamespaced supplier keys require explicit adoption/rebase (including archived records without variants); grouping does not create a second product to bypass them. Do not change a supplier's identity namespace casually: it changes the identity meaning and may require a reviewed migration/rebase.
+
+- Supplier family keys match exactly after approved cleaning; names/descriptions and row coordinates never establish identity. Namespaced family keys are scoped by store and supplier. Approved standalone keys are based on canonical SKU, not title.
+- SKU canonicalization and mapping-key normalization use the existing PostgreSQL function. Numeric/unresolved identifier cells require review. No JavaScript case-folding, SKU-prefix guessing, spelling inference, product reassignment, archive restoration or cross-supplier SKU reuse occurs.
+- All selected rows are grouped before family writes, including split/out-of-order repeats. A canonical SKU claimed by multiple candidate families blocks every affected candidate. Identical business effects collapse, but every contributing row remains linked. Conflicting prices/options/quantities stay reviewable; quantities are never summed. Mixed currencies and colliding option combinations require review.
+- NEEDS_REVIEW content can have reliable identities. Missing/conflicting prices stay null; FAILED cleaning output supplies no business data. Product text must agree rather than selecting the first row or concatenating qualifications. No claims, categories or tags are invented.
+
+The tested three-row example produces one Product, two Variants, three exact source/cleaner links and one unpublished NEEDS_REVIEW revision (the 30 cm variant lacks a price). Preview this plan without database writes:
+
+```bash
+bun -e 'import { planGrouping } from "@catalogforge/grouping"; import { exampleGroupingRows, exampleGroupingConfig } from "@catalogforge/grouping/example"; console.log(JSON.stringify(planGrouping(exampleGroupingRows, exampleGroupingConfig, { supplierId: "example", products: [], variants: [] }), null, 2));'
+```
+
+For persisted results, call the service with actual UUIDs and configuration through a local script:
+
+```ts
+import { groupImport } from "@catalogforge/grouping/persistence";
+// actualStoreId, actualImportId and selectedCleaningResultIds must already exist.
+const run = await groupImport(actualStoreId, actualImportId, selectedCleaningResultIds, approvedConfig);
+```
+
+### Frozen inputs, transactions and recovery
+
+Two additive tables hold grouping work. GroupingRun freezes the grouper version, configuration snapshot/hash, selected-input hash and complete preflight plan. GroupingRowResult pins one exact cleaning result/source/import/store and its group, durable outcome and optional revision/variant. The selected manifest is the set of these records, not an ambiguous “latest” query. Compound foreign keys protect the selection scope, result-to-revision run/store, variant membership, and exact cleaner/source evidence references. RevisionSourceRow retains older nullable cleaner references for compatibility; new grouping evidence always supplies them.
+
+One run is allowed per import, preserving existing `(originImportId, productId)` proposal uniqueness. A same-input retry reuses it; changed configuration, selection, grouper version or persisted cleaning content is rejected and requires an explicit new import. Run inputs and row selections are SQL-immutable; terminal row outcomes cannot be replaced. Completion requires the exact expected number of terminal outcomes, including review/failure cases. COMPLETED means grouping finished, not that all rows passed review or anything was published. Original cleaning/source data stays unchanged. Privileged deletion and direct writes outside the service are not an application workflow; normal child-first fixture cleanup remains possible.
+
+Family writes execute sequentially with a short store-row lock and revalidate product/variant ownership, archive state and the exact published baseline. This intentionally bounds concurrency to one family per store across cooperating grouping invocations. Database unique constraints remain the final identity protection. Unique/serialization conflicts get at most three fresh transaction attempts. Writes use batches of at most 250 records; a family snapshot and its outcomes commit atomically. Large families still require proportionally larger transactions (15-second application transaction limit, existing five-second database-query limit); no universal throughput/memory guarantee is claimed.
+
+A caller interruption before commit rolls back identities, revision, evidence and outcomes; an interruption after commit leaves that family terminal and retry skips it. Infrastructure errors propagate, leaving unfinished work PENDING for explicit retry. There is no automatic grouping dispatcher/retry scheduler. Fault observers used in tests exercise both transaction rollback and interruption between committed families; grouping-specific process SIGKILL recovery has not separately been measured. Existing ingestion SIGKILL/Redis regressions remain separate coverage.
+
+### Partial imports and merchant ownership
+
+A new proposal starts from the published baseline and carries forward absent variant snapshots/evidence. Mapped-but-empty price is an unresolved update, not an old-price fallback; completely unmapped fields can retain their baseline values. Manually owned fields and markers win, with supplier disagreements recorded for review. Price and currency are protected as a pair. Nested ownership conservatively protects the whole parent field/object. Existing edited unpublished drafts require an explicit merge/rebase, and a partial update with unpublished variants but no published baseline is also blocked rather than arbitrarily choosing a draft.
+
+The frozen plan records the supplier candidate; final snapshots can differ where manual ownership preserves baseline values. To trace a field, follow the plan's variant rows/field configuration to the exact cleaning result and its cell/configuration/transformation evidence; for retained/manual values follow `basePublishedRevisionId` and manual markers. New evidence belongs to this supplier/import; inherited evidence may belong to older imports of the same supplier. Row membership alone is not semantic support for a future generated claim.
+
+Grouping never changes the published pointer or an existing snapshot. Baseline changes detected before commit produce review outcomes rather than automatic rebasing. Independently submitted imports may retain competing unpublished proposals; no completion-time winner is selected. Publication still needs approval/business validation, stale-baseline checks and protection against subsequent snapshot editing. No approval/archival/deletion workflow was introduced here.
+
+### Grouping evaluation and tests
+
+The [hand-labeled fixture](../packages/grouping/src/labeled-fixture.ts) uses real cleaner output for eight messy rows: duplicates, different sizes, identical titles across unrelated families, absent family identity, cross-family SKU conflict and a missing price. The database test independently verifies the expected dispositions. Reproduce the planner score:
+
+```bash
+bun -e 'import { planGrouping } from "@catalogforge/grouping"; import { measureAccuracy } from "@catalogforge/grouping/accuracy"; import { labeledRows, labeledConfig, groupingLabels } from "@catalogforge/grouping/labeled-fixture"; console.log(JSON.stringify(measureAccuracy(planGrouping(labeledRows, labeledConfig, { supplierId: "example", products: [], variants: [] }), groupingLabels), null, 2));'
+```
+
+Verified fixture scores: zero false automatic merges, zero false automatic splits, pair precision/recall 100% (three true family pairs), variant assignment accuracy 100% for five assigned rows, identity coverage 62.5%, automatic coverage 50% and review rate 50%. One assigned row still needs content review. Pair comparisons concern automatic assignments; pair recall includes labeled same-family pairs. Abstentions must be reported through coverage/review rates, not described as universal accuracy. These small fixture results are acceptance checks, not evidence of accuracy on unseen supplier files. The evaluator is also tested against deliberately incorrect merges.
+
+```bash
+node node_modules/vitest/vitest.mjs run packages/grouping/src/plan.test.ts
+bun --env-file=.env run node node_modules/vitest/vitest.mjs run tests/grouping.integration.test.ts
+```
+
+The ordinary full-suite commands also include these tests. Integration tests use isolated stores and child-first cleanup: grouping row outcomes → evidence → variant snapshots → published/baseline pointers → product revisions → variants/products → grouping runs → cleaning results → sources/imports/suppliers/stores. No database reset or shared Redis flushing is needed. Existing Bun-only multipart/jsdom and buffered-XLSX memory limitations below remain applicable; grouping does not change them.
+
+### Grouping scale observations
+
+Local Bun 1.3.12/PostgreSQL checks on 2026-10-23 used disposable completed imports, real cleaner output, unique textual SKUs and distinct explicit diameter options within one supplier family. Each row had preserved source cells and versioned cleaner provenance. Fixture creation preceded the timed `groupImport` call; all fixtures were removed in dependency order afterward.
+
+| Selected source rows | Grouping service time | Process peak RSS (MiB) | Persisted products / variants / proposals / snapshots / evidence links |
+| --- | --- | --- | --- |
+| 100 | 1,079 ms | 256.2 | 1 / 100 / 1 / 100 / 100 |
+| 1,000 | 727 ms | 411.7 | 1 / 1,000 / 1 / 1,000 / 1,000 |
+| 10,000 | 6,028 ms | 780.6 | 1 / 10,000 / 1 / 10,000 / 10,000 |
+
+Every run reached COMPLETED with exactly the selected count of APPLIED outcomes and no pending records. These are individual diagnostic runs, not a throughput benchmark: the smaller cases also ran alongside verification work, so times must not be extrapolated or compared as a scaling curve. The service time includes database reads, policy validation, planning and transactional writes; it excludes upload, spreadsheet parsing, fixture cleaning/setup and any queue wait. Database-only time is not separately instrumented. OS peak RSS includes fixture setup, dependencies and runtime allocation, not just grouping; it is neither a grouping-only peak nor a hard maximum. Compact per-result manifest hashing avoids an additional import-sized evidence copy. Longer descriptions, more history, concurrent stores or different family distributions may consume more resources. This does not establish production worker sizing, storefront latency or a 1,000,000-product capacity claim.
 
 ## Health and readiness
 
