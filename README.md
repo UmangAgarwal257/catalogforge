@@ -1,191 +1,104 @@
 # CatalogForge
 
-Milestone 1 provides the development foundation only: a placeholder Next.js application, an independent Bun worker, shared TypeScript packages, and local PostgreSQL/Redis. Uploads, products, AI, translations, authentication, and deployment are not implemented.
+An AI-assisted pipeline for turning supplier spreadsheets and photos into a reviewed, multilingual product catalog.
 
-## Prerequisites
+Supplier files often contain inconsistent prices, repeated rows, incomplete variants, and conflicting descriptions. CatalogForge is being built to preserve those inputs, flag uncertainty, and help merchants prepare accurate listings without putting import processing on the shopper's request path.
 
-- Bun **1.3.12** (the package-manager version recorded in the root manifest). Install using the [official Bun instructions](https://bun.sh/docs/installation), then verify `bun --version`.
-- Node.js **24.10.0** is the verified Next.js runtime. Bun installs packages and runs scripts; Next.js itself uses Node. Forcing Next.js 16.4.2 to run under Bun 1.3.12 failed during production page-data collection. The worker and Prisma CLI run under Bun.
-- Docker with Docker Compose. Verify `docker info` and `docker compose version`. On WSL 2, enable Ubuntu integration in Docker Desktop; restart the terminal/session after Docker group changes.
-- Free host ports: web **3000**, worker health **3001**, PostgreSQL **5432**, Redis **6379**.
+## Features
 
-No npm, yarn, or pnpm commands are needed. Run the following commands from the repository root.
+**Implemented**
 
-## First-time setup
+- A Next.js application with a placeholder homepage and health endpoints.
+- An independent worker with PostgreSQL/Redis connectivity and a development BullMQ smoke test.
+- Store, supplier, import, and source-row database models with scoped foreign keys, request uniqueness, and protected original row data.
+- Shared TypeScript packages, configuration validation, and local development checks.
 
-1. Copy `.env.example` to `.env` and fill in a unique local PostgreSQL password. Put the same password, URL-encoded, in `DATABASE_URL`. Do not use production credentials. The implementation workspace already has a generated local `.env`; do not overwrite it unless intentionally changing local configuration.
-2. Install dependencies and start infrastructure:
+**Planned workflow**
 
-   ```bash
-   bun install --frozen-lockfile
-   bun run infra:up
-   bun run db:generate
-   bun run db:deploy
-   bun run db:check
-   ```
+Upload CSV/XLSX and photos → clean and group rows into products/variants → generate descriptions with supplier evidence and field confidence → translate into German/French → merchant review → publish to a storefront → export CSV/JSON.
 
-3. Start the web application:
+The planned pipeline will flag missing or conflicting data for review rather than guess. The target is background imports of up to 10,000 rows and 2,000 photos; that capacity has not been demonstrated yet.
 
-   ```bash
-   bun run dev
-   ```
+## Tech Stack
 
-4. In another terminal, start the worker:
-
-   ```bash
-   bun run dev:worker
-   ```
-
-Visit [the placeholder homepage](http://localhost:3000). Expected worker startup output confirms PostgreSQL and Redis connectivity and says that no business jobs are running. Stop either application with Ctrl+C.
-
-`bun install` is used when intentionally changing dependencies; `bun install --frozen-lockfile` checks that installation agrees with the accepted lockfile. Regenerate the Prisma client after a fresh install or schema change. Generated client files are ignored by Git.
-
-## Structure
-
-```text
-apps/web/         Next.js App Router, minimal Tailwind/shadcn foundation, health routes
-apps/worker/      Independent Bun worker, health endpoints, explicit development smoke job
-packages/db/      Prisma configuration, migration, shared lazy database client
-packages/shared/  Zod environment schemas and shared health types
-tests/            Explicit database integration test
-```
-
-Both applications use `workspace:*` dependencies. Shared packages export TypeScript directly: Bun handles this for the worker, and Next.js transpiles them for the web application. No separate package build or orchestration service is needed. The database package is for server-side use only; never import it into a React client component.
-
-Optional VS Code tasks in `.vscode/tasks.json` start the web and worker using the same Bun commands.
-
-`FoundationProbe` remains a development persistence check with no catalog business meaning. Milestone 2B-1 adds only the supplier import data models described below; catalog models remain deferred.
-
-## Environment configuration
-
-Keep one local `.env` in the repository root. Root scripts and workspace scripts explicitly load it with Bun. Shell-provided environment variables take precedence, allowing deployment configuration later. Environment files and generated artifacts are ignored by Git; `.env.example` contains placeholders only.
-
-| Variables | Consumers |
+| Area | Technology |
 | --- | --- |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Docker PostgreSQL initialization |
-| `POSTGRES_PORT` | Docker host port; default 5432 |
-| `DATABASE_URL` | Web, worker, Prisma commands, integration tests |
-| `REDIS_PORT` | Docker host port; default 6379 |
-| `REDIS_URL` | Worker and BullMQ smoke test |
-| `WEB_APP_URL` | Web configuration validation; default example is localhost:3000 |
-| `WORKER_HEALTH_PORT` | Worker localhost listener; default 3001 |
-| AI and Supabase placeholders | Reserved, optional, unused in this milestone |
+| Web | Next.js App Router, React, strict TypeScript, Tailwind CSS, minimal shadcn/ui setup |
+| Runtime and packages | Bun workspaces; Node.js for Next.js, Bun for the separate worker |
+| Data | PostgreSQL, Prisma |
+| Background infrastructure | Redis, BullMQ |
+| Local services | Docker Compose with persistent PostgreSQL/Redis volumes |
+| Validation and checks | Zod, Vitest, ESLint, TypeScript |
 
-Host applications connect to `127.0.0.1`, not Compose service names. If a host infrastructure port changes, update the matching connection URL too. Changing `WEB_APP_URL` does not change the Next.js listener: pass a matching port with `bun run dev --port 3002` if needed.
+The selected future integrations are OpenAI or Gemini, Supabase Storage, Papa Parse, ExcelJS, and Sharp. They are not part of the current product workflow.
 
-Zod validates required application configuration. Validation errors list variable names without echoing supplied values. Database pools have bounded connection/query timeouts and at most five connections per process. Future concurrency and production pooling decisions remain open.
+## Architecture
 
-Docker PostgreSQL applies initialization credentials only when its volume is first created. Changing `.env` does not change credentials inside an existing database. Normal development should preserve the existing volume and credentials.
+A modular monolith shares database and validation packages between the web application and a separate worker process.
 
-## Infrastructure lifecycle
+```mermaid
+flowchart LR
+    Browser --> Web[Next.js web application]
+    Web -->|Prisma| DB[(PostgreSQL)]
+    Worker[Bun worker] -->|Prisma| DB
+    Worker -->|Connectivity and smoke test| Redis[(Redis / BullMQ)]
+    Web -. Submit imports .-> Redis
+    Redis -. Import jobs .-> Worker
+    Worker -. Enrichment and translation .-> AI[AI provider]
+    Storefront[Storefront: planned Next.js routes] -. Published catalog reads .-> DB
+```
+
+Solid connections represent current application connectivity; dashed connections represent planned product processing. The ordinary worker does not consume import jobs yet.
+
+PostgreSQL holds business state; Redis will deliver asynchronous work. The planned storefront will read approved catalog data and precomputed translations, without calling AI or waiting for imports.
+
+Code is organized under [apps/web](./apps/web), [apps/worker](./apps/worker), [packages/db](./packages/db), and [packages/shared](./packages/shared). Operational details are in the [development guide](./docs/DEVELOPMENT.md).
+
+## Getting Started
+
+Prerequisites: Bun 1.3.12, Node.js 24, and Docker with Compose. Defaults use ports 3000 (web), 3001 (worker health), 5432 (PostgreSQL), and 6379 (Redis).
+
+From the repository root, copy [.env.example](./.env.example) to a local `.env` if one does not already exist. Set a local `POSTGRES_PASSWORD` and use its URL-encoded value in `DATABASE_URL`. Leave the future AI/storage credentials blank.
 
 ```bash
-bun run infra:status
-bun run infra:down
+bun install --frozen-lockfile
 bun run infra:up
-```
-
-Compose binds PostgreSQL and Redis to localhost, uses named volumes, and waits for health checks. PostgreSQL data and Redis AOF data survive normal container recreation. `infra:down` does not remove volumes. Do not add `-v` unless deliberately deleting local data. Redis uses `noeviction` and is intended for trusted local development; this is not a production security configuration.
-
-The previous host PostgreSQL installation is not used, changed, or deleted by this project. Its service must stay stopped to leave port 5432 available.
-
-## Database migrations
-
-After editing the Prisma schema in an approved milestone:
-
-```bash
-bun run db:migrate --name describe_the_change
 bun run db:generate
-```
-
-Review the generated SQL before committing. Use `bun run db:deploy` to apply already-created migrations, including on another developer's local database. Never run schema reset against data you need to preserve.
-
-Prisma 7 uses `prisma.config.ts` for the datasource URL and `@prisma/adapter-pg` for the PostgreSQL driver. The shared database client is initialized lazily and reused across Next.js development reloads; the independent worker disconnects it during shutdown.
-
-## Supplier import data (Milestone 2B-1)
-
-- **Store** owns suppliers and imports.
-- **Supplier** belongs to one store and can have many imports.
-- **Import** records the original filename/private storage key, SHA-256 hash, request idempotency key, parser/mapping configuration, processing status, errors, timestamps, and an initially unknown row total.
-- **SourceRow** records original sheet coordinates and ordered cells, an optional fingerprint, processing status, and structured issues.
-
-All four models have UUID primary keys. Compound foreign keys enforce that an import's supplier and a source row's import belong to the same store. Request keys are unique within `(storeId, supplierId)`; source coordinates are unique within `(importId, sheetIndex, rowNumber)`. File hashes and row fingerprints are deliberately nonunique.
-
-Source cells use an ordered JSON array such as `[{"columnIndex":0,"header":"Notes","value":"frost-resistant"},{"columnIndex":1,"header":"Notes","value":"not frost-proof"}]`. Duplicate headers, cell position, and textual leading zeros can be retained. JSONB preserves array order; the future ingestion layer must supply the correct ordered values. Issues use an array of objects with codes, column positions, and reasons.
-
-Import statuses are `PENDING`, `PROCESSING`, `PAUSED`, `COMPLETED`, and `FAILED`. Row statuses are independently `PENDING`, `PROCESSING`, `DONE`, `NEEDS_REVIEW`, and `FAILED`. Defaults are `PENDING`; completion does not imply publication or that every row succeeded. This schema defines available states, not transition/recovery logic.
-
-The supplier-data migration adds PostgreSQL checks for nonnegative row totals/sheet indexes, positive physical row numbers, valid SHA-256 text, nonblank request keys, and array-shaped cells/issues. It also adds a trigger on **SourceRow only**, rejecting changes to `id`, `importId`, `storeId`, sheet index/name, row number, original cells, fingerprint, and creation time. Populate original fields, including any fingerprint, at insertion. Processing status, issues, and `updatedAt` remain writable; Prisma manages `updatedAt` for its updates. Direct SQL updates must set that timestamp explicitly if required.
-
-These checks and the trigger are maintained in migration SQL because Prisma's model language does not express them. Preserve them when creating future migrations. Foreign keys restrict parent deletion, but explicit child-first deletion remains possible: source rows → imports → suppliers → stores.
-
-Apply the accepted migration and run all database tests:
-
-```bash
 bun run db:deploy
-bun run db:generate
-bun run test:integration
+bun run db:check
+bun run dev
 ```
 
-The integration suite tests scoped foreign keys, request/coordinate uniqueness, concurrent duplicate requests, ordered source preservation, status independence, SQL checks, blocked source edits through SQL/Prisma, allowed processing updates, and fixture cleanup. It retains the existing foundation test and deletes only its own fixtures.
-
-Storage keys are metadata only; no files are uploaded or parsed yet. Array checks do not validate every cell/issue object's internal shape. There is no authentication or row-level access control, automatic progress accounting, job recovery/outbox, or catalog duplicate detection. Products, variants, revisions, AI, and translations remain deferred. Existing database data and the foundation migration are preserved.
-
-Future implementation considerations:
-
-- During the upload milestone, protect original import file metadata, including `storageKey` and `fileSha256`, from silent modification after finalization. This protection is not implemented by the current SourceRow trigger.
-- During spreadsheet parsing, use Zod to validate each `rawCells` entry's structure, including column position, header, and value, before persistence. PostgreSQL currently enforces only the outer array shape, which is sufficient for Milestone 2B-1.
-
-## Health and connectivity
+In a separate terminal:
 
 ```bash
-curl --fail http://localhost:3000/api/health
-curl --fail http://localhost:3000/api/ready
-curl --fail http://localhost:3001/health
-curl --fail http://localhost:3001/ready
-bun run worker:smoke
+bun run dev:worker
 ```
 
-Healthy endpoints return `{"status":"ok"}`. Liveness means the process responds; readiness checks its required dependencies. Web readiness checks PostgreSQL. Worker readiness checks PostgreSQL and Redis. Dependency failures return HTTP 503 with a generic unavailable status, without returning connection strings or database error details.
+Open [localhost:3000](http://localhost:3000) for the placeholder homepage. Stop applications with Ctrl+C; use `bun run infra:down` to stop local services while retaining their data. See the [development guide](./docs/DEVELOPMENT.md) for environment settings, migrations, and troubleshooting.
 
-The ordinary worker starts no BullMQ consumers. `worker:smoke` explicitly creates an isolated development queue, executes one PostgreSQL query through a BullMQ job under Bun, then cleans up that queue. It refuses to run with `NODE_ENV=production`.
-
-The worker fails startup if dependencies are unavailable, handles SIGINT/SIGTERM, and bounds shutdown time. Redis reconnection and durable job recovery are not implemented: restart the foundation worker after a lost Redis connection. Recovery/outbox design belongs to the background-processing milestone.
-
-## Checks
+## Testing
 
 ```bash
-bun run typecheck
-bun run lint
 bun run test
 bun run test:integration
-bun run worker:smoke
+bun run typecheck
+bun run lint
 bun run build
 ```
 
-- Unit tests validate configuration defaults, invalid/missing values, and credential-safe validation messages.
-- Integration tests require healthy PostgreSQL and applied migrations. They check the foundation probe and supplier-data integrity using isolated fixtures; unavailable infrastructure fails the tests rather than silently skipping them.
-- The smoke job requires PostgreSQL and Redis and is separate from the unit suite.
-- The production build validates Next.js compilation and type checking. No load benchmark, import recovery, or domain accuracy guarantee is established by these checks.
+Unit tests cover environment validation. Database integration tests cover scoped relationships, idempotency keys, source coordinates, ordered cells, source immutability, and allowed processing updates. They require PostgreSQL with migrations applied and clean up their own fixtures.
 
-For a manual persistence check, create a uniquely named probe through Prisma, record its value, run `infra:down` and `infra:up`, and read it again. Remove only that probe afterward. Do not stop services while another developer is using them.
+`bun run worker:smoke` separately verifies a BullMQ job and Prisma query under Bun with PostgreSQL and Redis running. These checks validate the current foundation and schema, not the planned import pipeline or its scale target.
 
-Check the homepage and health routes, stop Redis and confirm worker readiness becomes 503, and stop PostgreSQL and confirm web readiness becomes 503 while web liveness remains 200. Restore services and restart the worker. Errors should be actionable without exposing credentials.
+## Reliability and Accuracy
 
-No deployment is configured. The future targets remain Vercel for Next.js, Railway for the worker/Redis, and Supabase for PostgreSQL/storage. See [PROJECT.md](./PROJECT.md) for requirements and [EDGE-CASES.md](./EDGE-CASES.md) for unimplemented cases and planned verification.
+Database constraints reject cross-store supplier/import references, duplicate request keys within a supplier scope, and duplicate source coordinates. Original cells are stored as ordered JSON arrays so duplicate headers can be preserved. A PostgreSQL trigger protects source data and identity while allowing processing-state updates. File hashes and row fingerprints remain nonunique so intentional reprocessing and repeated supplier content are representable.
 
-## Milestone 1 verification record
+Planned safeguards include durable dispatch through a transactional outbox, idempotent catalog writes, bounded retries, crash recovery, evidence-backed claims, and merchant approval before published content changes. The schema does not implement those workflows yet.
 
-Verified on 2026-10-23 in Ubuntu 24.04 / WSL 2 with Docker Desktop, Bun 1.3.12, and Node 24.10.0:
+[EDGE-CASES.md](./EDGE-CASES.md) records expected failure behavior, implementation status, and planned verification.
 
-- Frozen-lockfile dependency installation, Prisma generation, the initial development migration, and migration deployment passed.
-- PostgreSQL 17.10 and Redis 7.4.9 health checks passed on localhost ports 5432 and 6379.
-- Type checking and ESLint passed; Vitest passed 10 configuration tests and one database integration test.
-- The Bun BullMQ smoke job completed a Prisma query and cleaned up its isolated queue.
-- The Next.js production build passed under Node. The development homepage and all four health/readiness endpoints responded successfully. A browser reload produced no console warnings/errors or page errors.
-- Worker SIGINT/SIGTERM shutdown checks exited cleanly. Unavailable Redis and invalid configuration were rejected at startup; the invalid supplied secret value was not echoed.
-- Stopped dependencies produced HTTP 503 readiness responses while liveness remained 200. The homepage remained available during PostgreSQL unavailability. Web database readiness recovered after PostgreSQL returned; the worker was restarted after Redis returned.
-- A Prisma probe and Redis value survived both normal restart and container removal/recreation with named volumes retained. Temporary probes were removed afterward.
-- The local environment and generated client were confirmed ignored, known local credentials were absent from tracked/unignored files, and the Git staging area remained empty.
+## Current Limitations
 
-The initial forced-Bun Next.js build failed; the documented Node runtime resolved it. These foundation checks do not establish application accuracy, throughput, durable import recovery, or production readiness.
+The application currently exposes a placeholder page and health checks. Uploads, parsing/normalization, product and variant models, AI generation, translation, merchant review, storefront pages, exports, and cost reporting are not implemented. Authentication and deployment are also pending. No throughput, storefront-load, accuracy, or cost benchmarks are available.

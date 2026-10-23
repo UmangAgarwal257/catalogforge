@@ -76,6 +76,13 @@ Use the following stack unless we explicitly approve a change:
 
 Do not substitute technologies or introduce major dependencies without explaining the reason and obtaining approval.
 
+## Documentation
+
+- [README.md](./README.md) describes the project and its current capabilities.
+- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) contains detailed local setup, troubleshooting, and development notes.
+- Milestone implementation reports belong in Codex chat, not the README.
+- Update public documentation only when relevant functionality or setup changes.
+
 ## Git discipline
 
 EDGE-CASES.md must be created and committed as the first commit, before any application code.
