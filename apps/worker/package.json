@@ -1,0 +1,11 @@
+{
+  "name": "@catalogforge/worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@catalogforge/db": "workspace:*",
+    "@catalogforge/shared": "workspace:*",
+    "bullmq": "6.4.0",
+    "ioredis": "^5.8.0"
+  }
+}

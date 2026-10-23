@@ -1,0 +1,18 @@
+{
+  "name": "@catalogforge/db",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "generate": "bun --env-file=../../.env run --bun prisma generate",
+    "migrate": "bun --env-file=../../.env run --bun prisma migrate dev",
+    "deploy": "bun --env-file=../../.env run --bun prisma migrate deploy"
+  },
+  "dependencies": {
+    "@catalogforge/shared": "workspace:*",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": { "prisma": "7.10.1", "@types/pg": "^8.15.0" }
+}

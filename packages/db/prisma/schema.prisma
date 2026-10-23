@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Development-only persistence probe. No CatalogForge business entities yet.
+model FoundationProbe {
+  id        String   @id
+  value     String
+  createdAt DateTime @default(now())
+}
