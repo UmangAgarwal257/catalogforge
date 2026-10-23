@@ -7,9 +7,93 @@ datasource db {
   provider = "postgresql"
 }
 
-// Development-only persistence probe. No CatalogForge business entities yet.
+// Retained development-only persistence probe from the foundation milestone.
 model FoundationProbe {
   id        String   @id
   value     String
   createdAt DateTime @default(now())
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+enum SourceRowStatus {
+  PENDING
+  PROCESSING
+  DONE
+  NEEDS_REVIEW
+  FAILED
+}
+
+model Store {
+  id        String     @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  suppliers Supplier[]
+  imports   Import[]
+}
+
+model Supplier {
+  id        String   @id @default(uuid()) @db.Uuid
+  storeId   String   @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  imports   Import[]
+
+  // Compound reference prevents an import from using another store's supplier.
+  @@unique([id, storeId])
+  @@index([storeId])
+}
+
+model Import {
+  id               String       @id @default(uuid()) @db.Uuid
+  storeId          String       @db.Uuid
+  supplierId       String       @db.Uuid
+  originalFilename String
+  storageKey       String
+  fileSha256       String       @db.VarChar(64)
+  idempotencyKey   String
+  parserVersion    String
+  mappingConfig    Json         @default("{}")
+  status           ImportStatus @default(PENDING)
+  totalRows        Int?
+  errorCode        String?
+  errorMessage     String?
+  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
+  startedAt        DateTime?    @db.Timestamptz(3)
+  finishedAt       DateTime?    @db.Timestamptz(3)
+  store            Store        @relation(fields: [storeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supplier         Supplier     @relation(fields: [supplierId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  sourceRows       SourceRow[]
+
+  @@unique([id, storeId])
+  @@unique([storeId, supplierId, idempotencyKey])
+  @@index([storeId, status])
+}
+
+model SourceRow {
+  id             String          @id @default(uuid()) @db.Uuid
+  importId       String          @db.Uuid
+  storeId        String          @db.Uuid
+  sheetIndex     Int
+  sheetName      String
+  rowNumber      Int
+  // Ordered array of { columnIndex, header, value }; never key by header alone.
+  rawCells       Json
+  rowFingerprint String?
+  status         SourceRowStatus @default(PENDING)
+  issues         Json            @default("[]")
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+  import         Import          @relation(fields: [importId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+
+  // Source fields are also protected by the migration's UPDATE trigger.
+  @@unique([importId, sheetIndex, rowNumber])
+  @@index([importId, status])
 }

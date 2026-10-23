@@ -54,7 +54,7 @@ Both applications use `workspace:*` dependencies. Shared packages export TypeScr
 
 Optional VS Code tasks in `.vscode/tasks.json` start the web and worker using the same Bun commands.
 
-The only application table is `FoundationProbe`, a development persistence check with no catalog business meaning. The actual domain schema belongs to the next approved milestone.
+`FoundationProbe` remains a development persistence check with no catalog business meaning. Milestone 2B-1 adds only the supplier import data models described below; catalog models remain deferred.
 
 ## Environment configuration
 
@@ -102,6 +102,40 @@ Review the generated SQL before committing. Use `bun run db:deploy` to apply alr
 
 Prisma 7 uses `prisma.config.ts` for the datasource URL and `@prisma/adapter-pg` for the PostgreSQL driver. The shared database client is initialized lazily and reused across Next.js development reloads; the independent worker disconnects it during shutdown.
 
+## Supplier import data (Milestone 2B-1)
+
+- **Store** owns suppliers and imports.
+- **Supplier** belongs to one store and can have many imports.
+- **Import** records the original filename/private storage key, SHA-256 hash, request idempotency key, parser/mapping configuration, processing status, errors, timestamps, and an initially unknown row total.
+- **SourceRow** records original sheet coordinates and ordered cells, an optional fingerprint, processing status, and structured issues.
+
+All four models have UUID primary keys. Compound foreign keys enforce that an import's supplier and a source row's import belong to the same store. Request keys are unique within `(storeId, supplierId)`; source coordinates are unique within `(importId, sheetIndex, rowNumber)`. File hashes and row fingerprints are deliberately nonunique.
+
+Source cells use an ordered JSON array such as `[{"columnIndex":0,"header":"Notes","value":"frost-resistant"},{"columnIndex":1,"header":"Notes","value":"not frost-proof"}]`. Duplicate headers, cell position, and textual leading zeros can be retained. JSONB preserves array order; the future ingestion layer must supply the correct ordered values. Issues use an array of objects with codes, column positions, and reasons.
+
+Import statuses are `PENDING`, `PROCESSING`, `PAUSED`, `COMPLETED`, and `FAILED`. Row statuses are independently `PENDING`, `PROCESSING`, `DONE`, `NEEDS_REVIEW`, and `FAILED`. Defaults are `PENDING`; completion does not imply publication or that every row succeeded. This schema defines available states, not transition/recovery logic.
+
+The supplier-data migration adds PostgreSQL checks for nonnegative row totals/sheet indexes, positive physical row numbers, valid SHA-256 text, nonblank request keys, and array-shaped cells/issues. It also adds a trigger on **SourceRow only**, rejecting changes to `id`, `importId`, `storeId`, sheet index/name, row number, original cells, fingerprint, and creation time. Populate original fields, including any fingerprint, at insertion. Processing status, issues, and `updatedAt` remain writable; Prisma manages `updatedAt` for its updates. Direct SQL updates must set that timestamp explicitly if required.
+
+These checks and the trigger are maintained in migration SQL because Prisma's model language does not express them. Preserve them when creating future migrations. Foreign keys restrict parent deletion, but explicit child-first deletion remains possible: source rows → imports → suppliers → stores.
+
+Apply the accepted migration and run all database tests:
+
+```bash
+bun run db:deploy
+bun run db:generate
+bun run test:integration
+```
+
+The integration suite tests scoped foreign keys, request/coordinate uniqueness, concurrent duplicate requests, ordered source preservation, status independence, SQL checks, blocked source edits through SQL/Prisma, allowed processing updates, and fixture cleanup. It retains the existing foundation test and deletes only its own fixtures.
+
+Storage keys are metadata only; no files are uploaded or parsed yet. Array checks do not validate every cell/issue object's internal shape. There is no authentication or row-level access control, automatic progress accounting, job recovery/outbox, or catalog duplicate detection. Products, variants, revisions, AI, and translations remain deferred. Existing database data and the foundation migration are preserved.
+
+Future implementation considerations:
+
+- During the upload milestone, protect original import file metadata, including `storageKey` and `fileSha256`, from silent modification after finalization. This protection is not implemented by the current SourceRow trigger.
+- During spreadsheet parsing, use Zod to validate each `rawCells` entry's structure, including column position, header, and value, before persistence. PostgreSQL currently enforces only the outer array shape, which is sufficient for Milestone 2B-1.
+
 ## Health and connectivity
 
 ```bash
@@ -130,7 +164,7 @@ bun run build
 ```
 
 - Unit tests validate configuration defaults, invalid/missing values, and credential-safe validation messages.
-- Integration tests require healthy PostgreSQL and applied migrations. They create/read/delete an isolated probe; unavailable infrastructure fails the test rather than silently skipping it.
+- Integration tests require healthy PostgreSQL and applied migrations. They check the foundation probe and supplier-data integrity using isolated fixtures; unavailable infrastructure fails the tests rather than silently skipping them.
 - The smoke job requires PostgreSQL and Redis and is separate from the unit suite.
 - The production build validates Next.js compilation and type checking. No load benchmark, import recovery, or domain accuracy guarantee is established by these checks.
 
