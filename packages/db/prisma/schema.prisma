@@ -37,6 +37,12 @@ enum ProductRevisionStatus {
   REJECTED
 }
 
+enum RowCleaningOutcome {
+  READY
+  NEEDS_REVIEW
+  FAILED
+}
+
 model Store {
   id        String     @id @default(uuid()) @db.Uuid
   name      String
@@ -113,11 +119,30 @@ model SourceRow {
   updatedAt      DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
   import         Import              @relation(fields: [importId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   revisionLinks  RevisionSourceRow[]
+  cleaningResults RowCleaningResult[]
 
   // Source fields are also protected by the migration's UPDATE trigger.
   @@unique([id, storeId])
   @@unique([importId, sheetIndex, rowNumber])
   @@index([importId, status])
+}
+
+// Candidate row data only; READY does not imply grouping or publication.
+model RowCleaningResult {
+  id             String             @id @default(uuid()) @db.Uuid
+  sourceRowId    String             @db.Uuid
+  storeId        String             @db.Uuid
+  cleanerVersion String
+  configHash     String             @db.VarChar(64)
+  configSnapshot Json
+  normalized     Json
+  evidence       Json
+  issues         Json
+  outcome        RowCleaningOutcome
+  createdAt      DateTime           @default(now()) @db.Timestamptz(3)
+  sourceRow      SourceRow          @relation(fields: [sourceRowId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([sourceRowId, cleanerVersion, configHash])
 }
 
 model Product {

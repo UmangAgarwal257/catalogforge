@@ -13,7 +13,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - Database entities will be introduced incrementally. Durable queue recovery and a transactional outbox belong to the background-processing milestone; this document does not implement them or require all proposed tables immediately.
 - Product updates remain proposals until merchant approval. An existing published version stays available during review.
 - Reliability and accuracy take priority over optional features. Uncertain grouping, unsupported claims, and missing required business data require review rather than guesses.
-- Entries still marked **Not handled** retain their original planning status and future test plans. The consumer reconnection case below records a verified ingestion failure and its regression-tested handling; it does not establish guarantees for future catalog stages.
+- Entries marked **Not handled** may record partial implementation; only explicitly scoped statuses claim tested behavior. Ingestion recovery and one-row cleaning do not establish guarantees for future catalog stages.
 - Proposed policies that are not settled by the approved architecture are identified as recommendations or unresolved decisions. Listing them here does not authorize implementation.
 
 ## Core correctness and reliability invariants
@@ -39,14 +39,14 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A renamed executable, truncated XLSX, or malformed CSV is uploaded.
 - **Application should do:** Validate content as well as extension, preserve accepted originals privately, and report file-level parse failures without generating products from unreliable fragments.
 - **Why:** An extension is not proof of format; partial interpretation can silently corrupt the catalog.
-- **Implementation status:** Not handled — upload validation and parsing have not been implemented.
+- **Implementation status:** Handled and tested for local CSV/XLSX ingestion validation and actionable failures. The valid-XLSX streaming-reader defect is separately recorded in EC-58. This does not establish future photo/ZIP or publication behavior.
 - **Planned test:** Supply mismatched signatures, truncated workbooks, and unterminated CSV quotes; expect actionable errors and no published products.
 
 ### EC-02 — Upload exceeds limits
 - **What happens:** A file exceeds configured bytes, contains 10,001 records, or supplies 2,001 photos.
 - **Application should do:** Enforce approved limits during acceptance/parsing, stop safely, and explain the exceeded limit without silently truncating the import.
 - **Why:** Limits protect resources and prevent merchants mistaking partial imports for complete ones.
-- **Implementation status:** Not handled — limit enforcement has not been implemented; byte limits remain undecided.
+- **Implementation status:** Handled and tested for the existing local spreadsheet limits (10 MiB, 10,000 accepted records, 256 columns, 100 sheets, physical-row/cell/evidence budgets). Buffered XLSX loading retains these checks and the pre-load ZIP expansion guard. Photo limits remain unimplemented, and these limits are not a hard RSS ceiling.
 - **Planned test:** Exercise just below, exactly at, and just above each limit; inspect database/storage cleanup and error messages.
 
 ### EC-03 — Interrupted upload or orphaned storage object
@@ -60,22 +60,29 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A ZIP contains parent-directory paths, nested archives, excessive expanded bytes, or too many entries.
 - **Application should do:** Constrain extraction paths, expanded bytes, entry counts, and supported contents; reject unsafe archives before processing photos.
 - **Why:** Compressed size alone does not bound disk/memory use or prevent path traversal.
-- **Implementation status:** Not handled — archive support and extraction safeguards have not been implemented.
+- **Implementation status:** Not handled in full — XLSX archive preflight checks entry count and declared expanded size before ExcelJS loading; rejection is tested. This does not validate dishonest expansion metadata or implement photo ZIP extraction, traversal protection, resource isolation or decompression deadlines.
 - **Planned test:** Use traversal entries and controlled high-expansion fixtures; expect rejection, bounded resource use, and no files outside the extraction area.
 
 ### EC-05 — Broken text encoding
 - **What happens:** CSV text contains a BOM, a legacy encoding, or already-corrupted characters.
 - **Application should do:** Decode supported encodings explicitly, preserve original bytes, and request review when recovery is uncertain rather than silently replacing meaning.
 - **Why:** Altered identifiers and care instructions can create wrong matches or unsafe claims.
-- **Implementation status:** Not handled — encoding detection and review behavior have not been implemented.
+- **Implementation status:** Not handled in full — the cleaner flags replacement/control/invisible characters without speculative repair. Legacy decoding and recovery remain outside this stage.
 - **Planned test:** Import UTF-8/BOM, accented legacy text, and irrecoverable sequences; compare originals, normalized values, and warnings.
 
 ### EC-06 — Ambiguous columns and workbook structure
 - **What happens:** Headers repeat or are missing, sheets disagree, or cells contain formulas, merged values, and hidden rows.
 - **Application should do:** Require an explicit mapping/sheet-selection policy, retain cell coordinates, and avoid executing formulas or assuming merged/hidden content is irrelevant. Formula-derived business values need a documented acceptance rule.
 - **Why:** Spreadsheet presentation does not reliably define a data model.
-- **Implementation status:** Not handled — mapping and workbook interpretation have not been implemented; detailed policies remain open.
+- **Implementation status:** Not handled in full — one-row cleaning tests positional mappings, expected headers, duplicate-column conflicts and review of formulas/error cells. Merged/hidden-cell interpretation and a mapping UI remain deferred.
 - **Planned test:** Import multi-sheet workbooks with duplicate headers, stale formula caches, merged cells, and hidden rows; expect explicit decisions and reproducible record counts.
+
+### EC-58 — Valid XLSX intermittently fails before worksheet metadata is loaded
+- **What happens:** The ExcelJS streaming reader ends ZIP iteration before workbook metadata is available; valid input fails with `MALFORMED_XLSX` and an underlying `model.sheets` TypeError. Reproduction outside tests/database/Redis ruled out fixture isolation as a necessary cause.
+- **Application should do:** Read validated XLSX archives using the supported buffered reader, preserve manifest order and source evidence, and retain all resource limits and two-pass completion checks.
+- **Why:** A valid file must not fail according to ZIP-stream timing; retries must produce the same immutable coordinates and values.
+- **Implementation status:** Handled and tested for the reproduced reader failure — a Node regression compares complete evidence over 100 repeated parses; scale fixtures include 100/1,000/10,000 rows and 32 columns. Isolated PostgreSQL runs persisted exact counts and completed. Buffered loading increases memory: the 10,000 × 32 Bun service run peaked at 745.9 MiB process RSS. This is an observed single run, not a worst-case bound; production resource isolation remains required.
+- **Test:** Run the ingestion parser tests under Node and the normal integration suite. Repeated evidence comparisons include empty sheets, duplicate headers, formulas/error values and physical coordinates. Existing retry/fencing tests still verify immutable evidence and exact completion counts. Measurements and runtime limitations are documented in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## B. Cleaning and business validation
 
@@ -83,42 +90,42 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** Prices include `1.299,00 €`, `12.5`, `£8`, or ambiguous `1,299`.
 - **Application should do:** Use explicit supported locale/currency rules, convert exact decimal values to integer minor units, and flag ambiguous cases for review.
 - **Why:** Guessing separators or currency can change a price by orders of magnitude.
-- **Implementation status:** Not handled — money parsing has not been implemented.
-- **Planned test:** Verify EUR 129900 minor units for the explicit European example, GBP 800 for `£8`, and review outcomes when currency or decimal convention is unresolved.
+- **Implementation status:** Handled and tested for one-row cleaning with EUR/GBP/USD two-digit minor units — exact integer arithmetic, explicit locale/symbol policies, strict grouping, ambiguous single-separator values and unsupported currencies are covered. No currency is inferred from country/language, and no exchange conversion occurs.
+- **Test:** Cleaning unit tests verify EUR 129900 for the configured European example, GBP 800 for explicitly mapped `£8`, and review when separators or symbols remain ambiguous. PostgreSQL integration tests verify persistence and source-cell evidence. This does not validate publication or grouped-product prices.
 
 ### EC-08 — Missing, negative, zero, or unrepresentable price
 - **What happens:** Price is blank, negative, zero, over numeric bounds, or has unsupported fractional precision.
 - **Application should do:** Preserve the input, distinguish blank from zero, validate supported bounds/precision, and block publication for unresolved required prices. Zero-price acceptance needs an explicit policy.
 - **Why:** Missing prices must not become free products; silent rounding changes business data.
-- **Implementation status:** Not handled — price business rules have not been implemented; supported currencies and zero-price policy remain open.
+- **Implementation status:** Not handled in full — one-row tests cover null versus zero, negative/invalid amounts, two-digit precision, BIGINT boundaries and review for zero prices. Unsupported currency exponents require review. Publication gates and free-product approval remain deferred.
 - **Planned test:** Cover blanks, zero, negatives, huge amounts, three-decimal values, and currencies with different minor-unit exponents.
 
 ### EC-09 — Mixed or conflicting currencies
 - **What happens:** Rows for one product use different currencies or symbols conflict with currency columns.
 - **Application should do:** Preserve each supplied currency, flag conflicts, and require an approved representation policy; never add exchange-rate conversion implicitly.
 - **Why:** Currency conversion is a separate business operation, and a collection cannot sort incomparable prices as if equivalent.
-- **Implementation status:** Not handled — currency consistency and display policies have not been implemented.
+- **Implementation status:** Not handled in full — source-cell currency/symbol conflicts are tested within a cleaned row and block READY. Cross-row/product currency consistency and display policy await grouping/publication.
 - **Planned test:** Import mixed EUR/GBP variants and conflicting symbol/code pairs; expect review and no silent conversion.
 
 ### EC-10 — Mixed, missing, or impossible units
 - **What happens:** Dimensions mix inches/cm, weights mix lbs/kg, units are absent, or values are negative.
 - **Application should do:** Convert only known units into canonical cm/grams, retain originals, apply explicit precision rules, and flag unknown or impossible values.
 - **Why:** Unit inference and uncontrolled rounding can materially change product information.
-- **Implementation status:** Not handled — unit normalization and precision rules have not been implemented.
-- **Planned test:** Check known conversions and boundary rounding; confirm missing units and negative weights require review instead of guessed corrections.
+- **Implementation status:** Handled and tested for one-row cleaning of g/kg/lb/oz weights and cm/mm/m/in dimensions, with supplier-specific aliases/defaults. Missing, conflicting and unsupported units require review. Weights use explicit half-up whole-gram rounding with exact converted grams retained; dimensions retain decimal centimetres.
+- **Test:** Unit tests verify 1.8 kg → 1800 g, 1 lb → 454 g with exact 453.59237 retained and a warning, and 8 in → 20.32 cm; they reject missing/conflicting units, negatives and weight overflow. The persisted example is integration-tested. Product-specific physical plausibility is not inferred.
 
 ### EC-11 — Missing identifiers and lost leading zeros
 - **What happens:** A SKU is absent, numeric-looking, or altered by spreadsheet formatting.
 - **Application should do:** Preserve textual identifiers, flag absent required identity, and avoid reconstructing leading zeros without evidence.
 - **Why:** Incorrect identity breaks variant matching and duplicate protection.
-- **Implementation status:** Not handled — identifier parsing and identity resolution have not been implemented.
+- **Implementation status:** Not handled in full — the cleaner preserves textual zeros, case and internal SKU characters and flags numeric Excel identifiers without reconstructing zeros. Product/variant matching remains deferred; cleaning never writes identities.
 - **Planned test:** Compare textual `00123`, numeric 123, and blank SKUs across imports; expect no unsupported identity merge.
 
 ### EC-12 — Unsafe HTML in supplier descriptions
 - **What happens:** Descriptions contain scripts, event handlers, unsafe URLs, or malformed markup.
 - **Application should do:** Preserve raw source privately and sanitize content before AI input/display using an approved policy; validate generated HTML again before rendering.
 - **Why:** Cleaning once does not make future generated or edited HTML safe.
-- **Implementation status:** Not handled — sanitization has not been implemented; sanitizer dependency/policy needs approval.
+- **Implementation status:** Not handled end to end — approved sanitize-html cleaning is unit-tested with a strict basic allowlist, preserved qualifications/paragraphs/lists, nonblocking script/handler removal warnings and review for potentially meaningful content loss. Discarded nonempty comments require `DESCRIPTION_COMMENT_REVIEW` without guessing significance; opening/closing paragraph and list boundaries cannot concatenate words in plain text. Unit and database tests cover negations, qualifiers, comment loss, retry identity and unchanged source evidence. Original cells remain immutable. AI input integration and generated/edited/storefront HTML validation are not implemented.
 - **Planned test:** Render adversarial HTML fixtures in source review and storefront views; expect no executable content while allowed formatting remains.
 
 ### EC-13 — Huge descriptions or extreme field sizes
@@ -132,7 +139,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** `terracota` appears alongside similar colors, or the proposed category is outside the supported taxonomy.
 - **Application should do:** Apply only approved deterministic aliases, validate category membership, and review uncertain corrections without changing original values.
 - **Why:** Similar spellings may represent distinct commercial options; model output is not a taxonomy authority.
-- **Implementation status:** Not handled — aliases and category validation have not been implemented; taxonomy remains undecided.
+- **Implementation status:** Not handled in full — explicitly configured attribute aliases are tested and carry configuration/transformation evidence; unknown spellings remain unchanged. Taxonomy validation and speculative spelling correction are absent.
 - **Planned test:** Use known aliases, plausible distinct colors, and invented category paths; expect traceable corrections or review.
 
 ## C. Grouping, variants, and duplicate protection
@@ -325,6 +332,13 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **Implementation status:** Handled and tested for spreadsheet ingestion — the Bun socket-interruption regression verifies automatic recovery without process/consumer replacement, accurate readiness transitions, exact persisted totals, unchanged partial evidence, repeated interruptions, duplicate delivery, healthy idle stability and graceful shutdown. No guarantee is claimed for future AI/catalog stages or a fixed end-to-end recovery deadline.
 - **Test:** `tests/redis-reconnection.integration.test.ts` runs a Bun child using the production consumer/readiness functions and an isolated TCP proxy. It queues imports during two outages while independent Redis connectivity remains healthy, checks 503 until consumer availability returns, then verifies completion, one consumer, unchanged evidence and exit code zero on SIGTERM. Run with `bun run test:integration` against local PostgreSQL and Redis; fixtures and private queues are cleaned afterward.
 
+### EC-57 — Cleaning retries or changed mappings replace prior evidence
+- **What happens:** Two callers clean the same source row concurrently, a request is retried, or a supplier's column/locale/alias policy changes.
+- **Application should do:** Save a separate RowCleaningResult keyed uniquely by sourceRowId, cleanerVersion and canonical configuration hash. Preserve each configuration snapshot and prior result; retry with insert-on-conflict-do-nothing and detect mismatches rather than overwrite them. Enforce source/store ownership in PostgreSQL. READY means only local cleaning rules passed.
+- **Why:** Original evidence and previous interpretations must remain inspectable; retry timing and configuration-object key order must not determine results or duplicate records.
+- **Implementation status:** Handled and tested for explicit one-row service calls — integration tests cover simultaneous retries, configuration changes, version uniqueness, cross-store rejection, unchanged SourceRows/status and unchanged published product/variant snapshots. Automatic cleaning queues, bulk orchestration and grouping remain absent.
+- **Test:** `tests/cleaning.integration.test.ts` uses isolated fixtures and direct PostgreSQL constraint checks; cleaning unit tests verify the deterministic example, cell/default/transformation provenance and stable configuration hashing. Infrastructure failures propagate to the caller; no automatic scheduling or retry loop is claimed.
+
 ## G. Merchant review, updates, and deletion
 
 ### EC-40 — Merchant edits while AI is running
@@ -448,7 +462,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 ## Explicit limitations and unresolved decisions
 
 - Except for individually updated statuses, the tests above remain plans, not runtime evidence. The tested ingestion-consumer recovery case does not establish full-pipeline correctness.
-- No database schema, worker, outbox, recovery loop, UI, AI integration, or deployed environment exists as part of this milestone. Tables will be added only with their approved implementation milestone.
+- The original planning document did not implement the system. Current scoped entries record ingestion recovery and explicit one-row cleaning; they do not claim AI, grouping, translation, publication or deployed production behavior.
 - Identity rules need agreement: supplier/store scope, missing/reused SKUs, grouping identifiers, fuzzy-match thresholds, and whether identical uploads reuse a run or create linked runs.
 - Import semantics need agreement: partial-update versus complete-snapshot files; absent-row deletion; older/newer import precedence; deletion restoration; bulk approval partial-success policy.
 - Parsing rules need agreement: accepted encodings/delimiters, sheet selection, formulas, hidden/merged cells, headers, and exact treatment of empty or malformed records.

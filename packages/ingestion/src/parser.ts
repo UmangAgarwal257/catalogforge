@@ -1,7 +1,5 @@
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
-import { Readable } from "node:stream";
-import { z } from "zod";
 import { IngestionError, LIMITS, parsedRowSchema, spreadsheetType, validateFile, type ParsedRow } from "./contracts";
 
 function jsonValue(value: unknown): string | number | boolean | null | object {
@@ -121,18 +119,18 @@ export async function* parseSpreadsheet(bytes: Uint8Array, filename: string): As
   let outputChars = 0;
   let hasHeader = false;
   try {
-    const reader = new ExcelJS.stream.xlsx.WorkbookReader(Readable.from([bytes]), {
-      worksheets: "emit", sharedStrings: "cache", styles: "cache", hyperlinks: "ignore"
-    });
-    for await (const sheet of reader) {
-      const model = z.object({ sheets: z.array(z.object({ name: z.string() })) }).safeParse("model" in reader ? reader.model : undefined);
-      if (!model.success || !("name" in sheet) || typeof sheet.name !== "string") throw new IngestionError("INVALID_XLSX", "Worksheet name/order metadata is unavailable.");
-      if (model.data.sheets.length > LIMITS.sheets) throw new IngestionError("SHEET_LIMIT", "Workbook exceeds 100 sheets.");
+    // The streaming reader can stop ZIP iteration before workbook metadata is
+    // available under Node. Load the bounded archive through ExcelJS's supported
+    // buffered API; preserve manifest order, including empty sheets.
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(new Uint8Array(bytes).buffer);
+    if (book.worksheets.length > LIMITS.sheets) throw new IngestionError("SHEET_LIMIT", "Workbook exceeds 100 sheets.");
+    for (const [sheetIndex, sheet] of book.worksheets.entries()) {
       const sheetName = sheet.name;
-      const sheetIndex = model.data.sheets.findIndex((item) => item.name === sheetName);
-      if (sheetIndex < 0) throw new IngestionError("INVALID_XLSX", "Worksheet is not present in the workbook manifest.");
+      if (sheet.rowCount > LIMITS.physicalRows) throw new IngestionError("PHYSICAL_ROW_LIMIT", "Worksheet exceeds the physical row safety limit.");
       let headers: unknown[] | undefined;
-      for await (const row of sheet) {
+      for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber++) {
+        const row = sheet.getRow(rowNumber);
         if (row.number > LIMITS.physicalRows) throw new IngestionError("PHYSICAL_ROW_LIMIT", "Worksheet exceeds the physical row safety limit.");
         if (row.cellCount > LIMITS.columns) throw new IngestionError("COLUMN_LIMIT", "Spreadsheet exceeds 256 columns.");
         const values: unknown[] = [];

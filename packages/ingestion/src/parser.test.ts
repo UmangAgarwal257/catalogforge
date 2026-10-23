@@ -77,6 +77,48 @@ describe("XLSX evidence", () => {
     expect(parsed[1]?.rawCells[1]).toMatchObject({ value: 9, metadata: { numFmt: "00000" } });
   });
 
+  it("repeatedly preserves worksheet order and complete evidence on identical XLSX bytes", async () => {
+    const book = new ExcelJS.Workbook();
+    book.addWorksheet("Empty");
+    const sheet = book.addWorksheet("Pots");
+    sheet.getRow(2).values = ["SKU", "Notes", "Notes", "Formula", "Error"];
+    sheet.getRow(5).values = ["0007", "first", "second", { formula: "1+1", result: 2 }, { error: "#DIV/0!" }];
+    const other = book.addWorksheet("Other");
+    other.addRow(["SKU"]); other.addRow(["0008"]);
+    const bytes = new Uint8Array(await book.xlsx.writeBuffer());
+    const expected = await rows(bytes, "supplier.xlsx");
+    expect(expected.map(row => [row.sheetIndex, row.sheetName, row.rowNumber])).toEqual([[1, "Pots", 5], [2, "Other", 2]]);
+    expect(expected[0]?.rawCells.map(cell => [cell.header, cell.value])).toEqual([
+      ["SKU", "0007"], ["Notes", "first"], ["Notes", "second"], ["Formula", { formula: "1+1", result: 2 }], ["Error", { error: "#DIV/0!" }]
+    ]);
+    for (let attempt = 0; attempt < 100; attempt++) expect(await rows(bytes, "supplier.xlsx")).toEqual(expected);
+  });
+
+  it.each([[100, 8], [1000, 8], [10000, 8], [10000, 32]])("parses exactly %i records across %i columns without changing evidence", async (count, width) => {
+    const book = new ExcelJS.Workbook(); book.addWorksheet("Empty");
+    const sheet = book.addWorksheet("Supplier");
+    sheet.getRow(2).values = Array.from({ length: width! }, (_, column) => column === 0 ? "SKU" : "Notes");
+    for (let row = 0; row < count!; row++) sheet.getRow(row + 4).values = Array.from({ length: width! }, (_, column) => column === 0 ? String(row).padStart(6, "0") : `v-${row}-${column}`);
+    const parsed = await rows(new Uint8Array(await book.xlsx.writeBuffer()), "supplier.xlsx");
+    expect(parsed).toHaveLength(count!);
+    for (const [index, row] of parsed.entries()) {
+      expect([row.sheetIndex, row.sheetName, row.rowNumber]).toEqual([1, "Supplier", index + 4]);
+      expect(row.rawCells.map(cell => [cell.columnIndex, cell.header, cell.value])).toEqual(
+        Array.from({ length: width! }, (_, column) => [column, column === 0 ? "SKU" : "Notes", column === 0 ? String(index).padStart(6, "0") : `v-${index}-${column}`])
+      );
+    }
+  });
+
+  it("retains worksheet, physical-row and column limits with buffered loading", async () => {
+    const sheets = new ExcelJS.Workbook();
+    for (let i = 0; i <= LIMITS.sheets; i++) sheets.addWorksheet(`Sheet ${i}`).addRow(["SKU"]);
+    await expect(rows(new Uint8Array(await sheets.xlsx.writeBuffer()), "sheets.xlsx")).rejects.toThrow(/100 sheets/);
+    const wide = new ExcelJS.Workbook(); wide.addWorksheet("Wide").getRow(1).values = Array(LIMITS.columns + 1).fill("Header");
+    await expect(rows(new Uint8Array(await wide.xlsx.writeBuffer()), "wide.xlsx")).rejects.toThrow(/256 columns/);
+    const sparse = new ExcelJS.Workbook(); sparse.addWorksheet("Sparse").getCell(`A${LIMITS.physicalRows + 1}`).value = "SKU";
+    await expect(rows(new Uint8Array(await sparse.xlsx.writeBuffer()), "sparse.xlsx")).rejects.toThrow(/physical row/);
+  });
+
   it("enforces the record limit across sheets", async () => {
     const book = new ExcelJS.Workbook();
     for (const name of ["First", "Second"]) {

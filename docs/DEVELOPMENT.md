@@ -239,7 +239,7 @@ POST returns 202 after original storage and PostgreSQL registration, before pars
 Limits: 10 MiB per original, 10,000 accepted nonblank data records across all sheets, 256 columns, 100 worksheets, 100,000 physical rows per sheet, 64 KiB serialized cell characters, and a 64 MiB serialized evidence-character budget. XLSX ZIP directory checks additionally cap entries at 2,000 and declared expanded bytes at 64 MiB. These supplementary safety limits reject wide/sparse or unusually large workbooks even below the record limit. The declared ZIP expansion check is not a complete defense against hostile archives with dishonest metadata; production needs resource isolation and stronger decompression/time limits.
 
 - CSV uses Papa Parse with UTF-8/BOM support, comma/semicolon detection, ordered arrays, and dynamic typing disabled. Ambiguous delimiters require correction. Physical row numbers identify each record's starting line, including quoted multiline records and blank lines. The first nonblank record is the header. Duplicate/blank headers are retained; uneven row widths retain extra/missing cells and add an issue.
-- XLSX uses ExcelJS's streaming reader, retains workbook sheet order/names and physical row numbers, and treats the first nonblank row of each sheet as its header. Blank/header-only sheets contribute no records. Completely empty files/workbooks fail; header-only input completes with zero rows.
+- XLSX uses ExcelJS's supported buffered reader after archive preflight, retains workbook sheet order/names (including empty sheets) and physical row numbers, and treats the first nonblank row of each sheet as its header. Blank/header-only sheets contribute no records. Completely empty files/workbooks fail; header-only input completes with zero rows.
 - Blank rows, including whitespace-only cells, are skipped; the byte-exact original retains them. Textual leading-zero SKUs remain strings. Numeric Excel cells remain numeric with available number-format/type metadata; no SKU reconstruction or unit/price normalization occurs.
 - Dates are serialized as ISO text; formulas/shared formulas and cached results remain structured evidence with an untrusted-formula issue. Formulas are never executed or treated as instructions. Source rows capture relevant parsed values/metadata, not every workbook formatting feature; the original file is the authoritative complete evidence.
 - Each ordered cell is Zod-validated before persistence. Header duplicates use positions rather than object keys. Source values, identities, fingerprints, and coordinates are never updated on retry.
@@ -261,6 +261,38 @@ Storage and PostgreSQL do not share a transaction. A crash or ambiguous registra
 ### Deployment blockers
 
 Local filesystem storage is development-only and does not work as durable shared storage on Vercel or across separate web/worker hosts. Production requires a shared private storage adapter accessible to both processes (planned: Supabase Storage), plus authentication or properly scoped demo access, request limits, resource quotas, and hardened parser resource isolation. The configured store UUID is an ownership scope only. Supabase Storage, full authentication, AI jobs, and all downstream catalog workflows are intentionally absent.
+
+## Deterministic one-row cleaning
+
+[packages/cleaning](../packages/cleaning) exposes a pure `cleanRow(source, config)` and a separate database service `cleanSourceRow(storeId, sourceRowId, config)`. There is no cleaning API, UI, automatic queue, bulk runner or grouping. Existing import COMPLETED still means ingestion only; cleaning never updates SourceRow status, cells, issues or timestamps, nor Product/Variant identities or published revisions.
+
+Run the tested example from the repository root (no database writes):
+
+```bash
+bun -e 'import { cleanRow } from "@catalogforge/cleaning"; import { exampleSource, exampleConfig } from "@catalogforge/cleaning/example"; console.log(JSON.stringify(cleanRow(exampleSource, exampleConfig), null, 2));'
+```
+
+Expected values include SKU `00123`, title `Terracotta Pot`, priceMinor `"129900"`/EUR, quantity 12, weight 1800 g and diameter `"20.32"` cm. The description preserves “not frost-proof”, care instructions, paragraphs and lists. Script removal produces a warning but the example remains READY. Its locale and symbol map are fixture policies, not application defaults.
+
+For a real persisted row, import `cleanSourceRow` from `@catalogforge/cleaning/persistence` and pass the actual store/source UUIDs plus a validated supplier-specific configuration. The service requires ingestion COMPLETED, matches the source's supplier/store, and saves one complete result. It does not schedule itself. The source's sheet index must match the configuration. Configurations explicitly specify:
+
+- Ordered column indexes and exact expected headers, including duplicate headers. Multiple source columns for one field must agree; no header guessing or first/last-column winner.
+- Number separators (or null for conservative unambiguous parsing), optional default currency, explicit symbol interpretations, units and approved unit/attribute aliases.
+- Per-field missing-value tokens, required output fields, `basic-v1` HTML policy and `half-up-gram-v1` weight policy. No supplier-specific defaults are hidden globally.
+
+Use [contracts.ts](../packages/cleaning/src/contracts.ts) for the configuration/output types and [example.ts](../packages/cleaning/src/example.ts) as a policy example. Change fixture IDs, sheet and positional mappings to match actual evidence; do not reuse the fixture's supplier assumptions blindly.
+
+Money uses decimal lexical validation followed by bigint arithmetic, with EUR/GBP/USD two-digit minor units and a maximum of 9223372036854775807 minor units. JSON uses decimal strings, never BigInt objects or floating-point money arithmetic. An explicit convention controls grouping and decimal parsing. Without one, `12.5`/`12,50` can be decimal amounts, but `1,299`/`1.299` require review. Signs, exponents, malformed groups, excess precision and unsupported currencies require review; no rounding, tax calculation or currency conversion occurs. Missing stays null; zero is preserved and requires review. A configured default is used only without supplier currency evidence, and conflicts between supplier currency sources remain unresolved. Typed XLSX numbers use their numeric decimal representation rather than display-locale formatting; unsafe numeric representations require review.
+
+Quantities are nonnegative whole counts within the signed 32-bit range, not automatically merchant inventory. Weights support g/kg/lb/oz; dimensions support cm/mm/m/in. Bare measurements require explicit configured units, and cell/default unit conflicts require review. Conversion uses exact decimal factors. Whole grams round half-up with a warning if changed, while `weightExactGrams` retains the exact conversion; dimensions retain decimal centimetres as strings. Unit aliases such as `lbs` are supplier-configured. Numeric SKUs are reviewable candidates; leading zeros are never reconstructed from Excel formatting. SKU case/internal characters stay intact; future identity matching must use the existing PostgreSQL canonicalization. Formulas/error/unsupported structured cells require review. Rich-text text is retained with a formatting-review issue. Suspicious encoding/control characters are flagged without guessed repair.
+
+The server-side sanitizer permits p/br/strong/em/ul/ol/li and no attributes; common block wrappers become paragraphs. Script/style removal and executable attribute removal create warnings without automatically blocking READY. Potentially meaningful discarded structures, attributes or CSS require review. Nonempty HTML comments, including unterminated comments, produce `DESCRIPTION_COMMENT_REVIEW`; discarded text is never promoted into claims. Empty comments alone do not block READY. Comment detection is deliberately conservative and may require review of benign comment-like input. Both opening and closing paragraph/list boundaries separate plain-text words, so `Not<p>frost-proof.</p>` becomes `Not\nfrost-proof.`, never `Notfrost-proof.`. Sanitized HTML and boundary-preserving plain text are separate outputs; plain text must never be inserted as HTML. This conservative policy cannot prove semantic equivalence of arbitrary supplier markup, and does not replace sanitization of future generated/edited HTML. Original cells remain authoritative.
+
+Each normalized field has evidence entries discriminated as `cell` (source UUID, zero-based column index, JSON value pointer), `configuration` (snapshot JSON pointer), or `transformation` (versioned rule). Defaults are never labelled supplier evidence. Issues carry a code, field, WARNING/REVIEW/ERROR severity, actionable message and evidence. READY means no blocking local issue; NEEDS_REVIEW retains resolved fields alongside unresolved ones; FAILED records invalid source structure/scope. Invalid configurations and infrastructure failures throw instead of fabricating permanent supplier errors.
+
+The additive RowCleaningResult table stores the result, configuration snapshot/hash, cleaner version and timestamp. Its compound source/store foreign key prevents cross-store references, and `(sourceRowId, cleanerVersion, configHash)` is unique. Configuration hashing sorts object keys while preserving array order. The service inserts without overwriting on conflict, verifies matching existing output and retains old results when mappings/policy change. Direct SQL checks enforce basic JSON shapes, SHA-256 hash format and nonblank cleaner version; Zod validates the detailed contract. Results are insert-only through this service, not protected from arbitrary privileged SQL updates. Bump the cleaner version when normalization or sanitizer behavior changes; review lockfile upgrades accordingly. No new publishing or revision logic is involved.
+
+Cleaning unit tests cover the example, ambiguity/limits, exact conversions, HTML and provenance. [Cleaning integration tests](../tests/cleaning.integration.test.ts) verify persistence, concurrent retries, old mapping retention, source ownership/immutability and published-snapshot preservation. Use the ordinary test and integration commands below. Future scaling can paginate immutable source rows and persist independent results in bounded batches; no 100/1,000/10,000-row cleaning throughput or automatic crash-recovery orchestration is claimed here.
 
 ## Health and readiness
 
@@ -293,9 +325,45 @@ Dashboard tests use React Testing Library, user-event, and jsdom under the exist
 
 The smoke test separately checks Bun/BullMQ connectivity. The production build checks Next.js compilation and types; production import APIs are disabled. Tests establish these ingestion behaviors, not catalog-generation accuracy, throughput guarantees, storefront performance under load, or provider costs.
 
-### Follow-up: intermittent ingestion test failures
+### XLSX reader reliability and measured resource use
 
-Investigate intermittent failures in `tests/ingestion.integration.test.ts`: the XLSX coordinate/metadata test sometimes reports `MALFORMED_XLSX`, and the empty-upload validation test sometimes returns HTTP 400 instead of the expected 422. The XLSX failure also reproduced against an unchanged `bf448cc` snapshot; isolated reruns and the final complete suite passed. The causes remain unresolved. Preserve these assertions and investigate parser/multipart behavior and test isolation before treating repeated runs as consistently reliable. No parser or upload-validation changes were made with the Redis recovery fix.
+The earlier intermittent `MALFORMED_XLSX` was reproduced under Node outside Vitest, PostgreSQL and Redis. The ExcelJS/unzipper streaming path sometimes ended ZIP entry iteration before reading workbook metadata, then threw while accessing `model.sheets`. The parser now loads the archive through `Workbook.xlsx.load` and iterates worksheets in manifest order. It retains the same two-pass contract, source coordinates/cell metadata, record/column/sheet/physical-row/cell/evidence limits, and pre-load file/ZIP expansion checks. It neither evaluates formulas nor changes immutable evidence. Buffered loading consumes the workbook before row/column checks can run; these limits do not constitute a hard process-memory ceiling.
+
+Run the repeated reader regression and scale cases under Node from the repository root:
+
+```bash
+node node_modules/vitest/vitest.mjs run packages/ingestion/src/parser.test.ts
+```
+
+The regression parses identical bytes 100 times after its initial expected-result parse, comparing complete evidence and worksheet coordinates on every iteration. Additional tests check 100/1,000/10,000 records, a 32-column workbook, formula/error values, duplicate headers and resource-limit rejection. Database integration tests separately check two-pass persistence, retry fencing, immutability and exact completion totals.
+
+Measured locally on 2026-10-23 with Node 24.10.0 and Bun 1.3.12. Each reader measurement used a fresh child process, a pre-generated XLSX with one empty sheet and one data sheet, duplicate headers, textual leading-zero SKUs, short values and two full parses. Every row/coordinate/width was checked; serialized evidence hashes matched across passes. The 32-column file was 1,820,746 bytes compressed and 19,855,665 declared expanded bytes. Fixtures/logs remain outside the repository.
+
+| Records × columns | Node parse passes (ms) | Node peak RSS (MiB) | Bun parse passes (ms) | Bun peak RSS (MiB) |
+| --- | --- | --- | --- | --- |
+| 100 × 8 | 40 / 13 | 100.3 | 55 / 16 | 125.8 |
+| 1,000 × 8 | 112 / 43 | 123.1 | 109 / 65 | 183.0 |
+| 10,000 × 8 | 533 / 343 | 283.7 | 517 / 456 | 284.0 |
+| 10,000 × 32 | 1,270 / 1,224 | 479.2 | 1,595 / 1,500 | 581.7 |
+
+Separate fresh Bun processes registered each file into an isolated store and invoked the existing two-pass ingestion service against local PostgreSQL. All reached COMPLETED with exactly the requested persisted count and SourceRows still PENDING; original file bytes and the final source coordinate/value were checked. Each process removed only its own fixtures afterward.
+
+| Persisted rows × columns | Registration (ms) | Two-pass parsing + persistence (ms) | Registration through completion (ms) | Process peak RSS (MiB) |
+| --- | --- | --- | --- | --- |
+| 100 × 8 | 37 | 190 | 227 | 230.3 |
+| 1,000 × 8 | 39 | 612 | 651 | 320.4 |
+| 10,000 × 8 | 64 | 3,629 | 3,693 | 471.4 |
+| 10,000 × 32 | 49 | 5,833 | 5,882 | 745.9 |
+
+These are single-run diagnostics, not throughput targets or maximum-memory guarantees. RSS is the OS process high-water mark (`process.resourceUsage().maxRSS`), includes runtime/dependencies and both passes, and does not isolate workbook allocation or garbage collection. Fixture generation happened in a separate process; parser timings include row validation, serialization and assertions. The service timings include storage, hashing, parsing and database work; they exclude HTTP upload, Redis waiting and queue dispatch. Database-only time was not independently instrumented. Some verification ran on the same host concurrently, and long cells, richer metadata, concurrency or dishonest ZIP metadata can consume more resources. Production still requires process resource isolation and stronger decompression/time limits; no limits were raised for these measurements.
+
+### Test runtimes and remaining compatibility concerns
+
+`bun run test` and `bun run test:integration` use Bun as the script/environment launcher but run Vitest under Node through its executable shebang. Next.js also runs under Node; worker recovery regressions explicitly spawn Bun children. Forcing Vitest itself under Bun is an additional compatibility check, not the documented web/test runtime.
+
+The empty-upload 400/422 discrepancy is reproducible in Bun 1.3.12 without a database: decoding identical valid multipart bytes with a zero-byte `filename="empty.csv"` part returns a Blob without `name`; Node 24.10.0 returns a File with that filename. The API consequently reports `INVALID_FILENAME` (400) under Bun before reaching `EMPTY_FILE` (422). Nonempty multipart parts retain the filename. The documented Node integration suite passes the original 422 assertion. No HTTP behavior, filename checks or assertions were weakened to hide the Bun difference.
+
+Forcing the complete component suite under Bun additionally fails jsdom initialization (`addEventListener` called on an invalid EventTarget). This is separate from XLSX parsing; Node component tests pass. Keep both Bun compatibility concerns visible if changing the web/test runtime or upgrading Bun/jsdom.
 
 ## Recorded local verification
 

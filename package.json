@@ -19,7 +19,7 @@
     "db:deploy": "bun run --cwd packages/db deploy",
     "db:check": "bun --env-file=.env run packages/db/src/check.ts",
     "worker:smoke": "bun --env-file=.env run apps/worker/src/smoke.ts",
-    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/db --noEmit && tsc -p packages/ingestion --noEmit && tsc -p apps/worker --noEmit && tsc -p apps/web --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/db --noEmit && tsc -p packages/ingestion --noEmit && tsc -p packages/cleaning --noEmit && tsc -p apps/worker --noEmit && tsc -p apps/web --noEmit && tsc -p tsconfig.tools.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "bun --env-file=.env run test:integration:run",
@@ -29,6 +29,7 @@
   "devDependencies": {
     "@catalogforge/db": "workspace:*",
     "@catalogforge/ingestion": "workspace:*",
+    "@catalogforge/cleaning": "workspace:*",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
     "@types/bun": "1.3.12",
