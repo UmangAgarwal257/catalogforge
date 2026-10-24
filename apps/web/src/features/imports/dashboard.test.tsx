@@ -223,3 +223,14 @@ it("pauses polling while hidden or offline and resumes without overlapping reque
   await act(async () => { window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(1); });
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
+
+it("labels settled catalog processing independently of successful AI and merchant review", async () => {
+  const pipeline = { phase:"ENRICHMENT",state:"COMPLETED",errorCode:null,errorMessage:null,nextAttemptAt:null,cleaned:11,grouped:11,proposals:5,awaitingEnrichment:0,enriched:2,enrichmentFailed:1,enrichmentStale:1,enrichmentBlocked:1,reviewRequired:5,needsReview:11,needsMapping:false,failed:0,exceptions:[],exceptionsLimited:false,blockedReasons:[],enrichmentIssues:[],proposalLinks:[] };
+  const base=fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url,init)=>url.startsWith(`/api/imports/${importId}`)?json({...details,pipeline}):base(url,init));
+  render(<ImportDashboard/>);const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"View pots.csv"}));
+  await screen.findByRole("heading",{name:"Catalog processing: Processing settled · ENRICHMENT"});
+  const expected={"Enriched successfully":"2","Enrichment failed":"1",Stale:"1","Enrichment blocked":"1","Awaiting enrichment":"0","Review required (products)":"5"};
+  for(const [label,value] of Object.entries(expected))expect(screen.getByText(label,{selector:"dt"}).nextElementSibling?.textContent).toBe(value);
+  expect(screen.getByText(/Review-required products can also be successfully enriched/)).toBeTruthy();
+});

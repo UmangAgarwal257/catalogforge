@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
 import { getDb, disconnectDatabase } from "@catalogforge/db";
-import { cleanSourceRow, configIdentity } from "@catalogforge/cleaning/persistence";
+import { cleanSourceRow, cleanSourceRows, configIdentity } from "@catalogforge/cleaning/persistence";
 import { exampleConfig, exampleSource } from "@catalogforge/cleaning/example";
 import { cleaningConfigSchema, cleaningOutputSchema, type CleaningConfig } from "@catalogforge/cleaning/contracts";
 
@@ -166,4 +166,39 @@ it("rejects invalid config before inserting any result", async () => {
   await expect(cleanSourceRow(storeId, sourceRowId, { ...mapping, defaultCurrency: "JPY" })).rejects.toThrow();
   expect(await db.rowCleaningResult.count({ where: { sourceRowId } })).toBe(0);
   expect(configIdentity(mapping).configHash).toMatch(/^[0-9a-f]{64}$/);
+});
+
+
+it("replays bounded partial batches, preserving existing IDs and immutable source evidence", async () => {
+  const row = await db.sourceRow.create({ data: { storeId, importId, sheetIndex: 0, sheetName: "Pots", rowNumber: 16, rawCells: exampleSource.rawCells } });
+  const existing = await clean();
+  const sourceBefore = await db.sourceRow.findMany({ where: { importId }, orderBy: { id: "asc" } });
+  const results = await Promise.all(Array.from({ length: 4 }, () => cleanSourceRows(storeId, [sourceRowId, row.id], mapping)));
+  for (const batch of results) { expect(batch[0]).toEqual(existing); expect(batch[1]!.sourceRowId).toBe(row.id); }
+  expect(new Set(results.map(batch => batch[1]!.id)).size).toBe(1);
+  expect(await db.rowCleaningResult.count({ where: { storeId } })).toBe(2);
+  expect(await db.sourceRow.findMany({ where: { importId }, orderBy: { id: "asc" } })).toEqual(sourceBefore);
+  expect(await cleanSourceRows(storeId, [row.id, sourceRowId], Object.fromEntries(Object.entries(mapping).reverse()))).toEqual([results[0]![1], existing]);
+});
+it.each(["normalized", "evidence", "issues", "configSnapshot"] as const)("refuses corrupted %s before inserting missing batch results", async field => {
+  const existing = await clean();
+  const row = await db.sourceRow.create({ data: { storeId, importId, sheetIndex: 0, sheetName: "Pots", rowNumber: 16, rawCells: exampleSource.rawCells } });
+  const changed = await db.rowCleaningResult.update({ where: { id: existing.id }, data: { [field]: field === "issues" ? [{ altered: true }] : { altered: true } } });
+  await expect(cleanSourceRows(storeId, [row.id, sourceRowId], mapping)).rejects.toThrow(/differs/);
+  expect(await db.rowCleaningResult.count({ where: { sourceRowId: row.id } })).toBe(0);
+  expect(await db.rowCleaningResult.findUnique({ where: { id: existing.id } })).toEqual(changed);
+});
+it("keeps stale cleaner interpretations separate from verified current results", async () => {
+  const original = await clean();
+  await db.rowCleaningResult.update({ where: { id: original.id }, data: { cleanerVersion: "old-cleaner", normalized: { stale: true } } });
+  const [current] = await cleanSourceRows(storeId, [sourceRowId], mapping);
+  expect(current!.id).not.toBe(original.id);
+  expect(current!.normalized).toEqual(original.normalized);
+  expect(await db.rowCleaningResult.count({ where: { sourceRowId } })).toBe(2);
+});
+it("bounds batches and rejects absent or repeated source identities", async () => {
+  await expect(cleanSourceRows(storeId, Array.from({ length: 101 }, () => crypto.randomUUID()), mapping)).rejects.toThrow(/100 distinct/);
+  await expect(cleanSourceRows(storeId, [sourceRowId, sourceRowId], mapping)).rejects.toThrow(/100 distinct/);
+  await expect(cleanSourceRows(storeId, [sourceRowId, crypto.randomUUID()], mapping)).rejects.toThrow(/not found/);
+  expect(await db.rowCleaningResult.count({ where: { storeId } })).toBe(0);
 });

@@ -1,5 +1,5 @@
 import { getDb,type Prisma } from "@catalogforge/db";
-import { cleanSourceRow,configIdentity } from "@catalogforge/cleaning/persistence";
+import { cleanSourceRows,configIdentity } from "@catalogforge/cleaning/persistence";
 import { CLEANER_VERSION } from "@catalogforge/cleaning/contracts";
 import { groupImport } from "@catalogforge/grouping/persistence";
 import { createEnrichmentRun,processEnrichmentRun } from "@catalogforge/enrichment";
@@ -11,7 +11,7 @@ import { z } from "zod";
 const manifestSchema=z.record(z.uuid(),z.object({version:z.number().int(),runId:z.uuid().optional(),blocked:z.string().optional()}).strict());
 const json=(v:unknown):Prisma.InputJsonValue=>JSON.parse(JSON.stringify(v));
 class Fenced extends Error {}
-export type PipelineOptions={provider?:Provider;policy?:Policy;afterCleanBatch?:(count:number)=>Promise<void>;afterRunBound?:(runId:string)=>Promise<void>;beforeEnrichmentApply?:()=>Promise<void>};
+export type PipelineOptions={provider?:Provider;policy?:Policy;afterCleanBatch?:(count:number)=>Promise<void>;afterRunBound?:(runId:string)=>Promise<void>;beforeEnrichmentApply?:()=>Promise<void>;afterClaim?:(fence:number)=>Promise<void>;beforeCleaningBatch?:()=>Promise<void>;beforeGroupFamily?:()=>Promise<void>;beforeGroupFamilyCommit?:()=>Promise<void>;beforeHeartbeat?:()=>Promise<void>};
 export async function processCatalogTask(storeId:string,importId:string,options:PipelineOptions={}){
  if((options.provider||options.policy)&&process.env.NODE_ENV!=="test")throw Error("TEST_PROVIDER_ONLY");
  const db=getDb();
@@ -26,8 +26,9 @@ export async function processCatalogTask(storeId:string,importId:string,options:
  const ensure=async()=>{const t=await db.catalogTask.findFirst({where});if(!t)throw new Fenced();};
  const checkpoint=async(data:Prisma.CatalogTaskUpdateManyMutationInput)=>{if(!(await db.catalogTask.updateMany({where,data})).count)throw new Fenced();};
  let heartbeat:Promise<unknown>|undefined;
- const timer=setInterval(()=>{if(!heartbeat)heartbeat=db.catalogTask.updateMany({where,data:{leaseUntil:new Date(Date.now()+90000)}}).catch(()=>{}).finally(()=>{heartbeat=undefined;});},20000);
+ const timer=setInterval(()=>{if(!heartbeat)heartbeat=(async()=>{await options.beforeHeartbeat?.();await db.catalogTask.updateMany({where,data:{leaseUntil:new Date(Date.now()+90000)}});})().catch(()=>{}).finally(()=>{heartbeat=undefined;});},20000);
  try{
+  await options.afterClaim?.(claimed.fence);
   const imported=await db.import.findFirstOrThrow({where:{id:importId,storeId}});
   if(imported.status!=="COMPLETED")throw Error("PARSING_NOT_COMPLETE");
   const profile=frozenProfile(imported.mappingConfig);
@@ -44,7 +45,10 @@ export async function processCatalogTask(storeId:string,importId:string,options:
    cursor=undefined;let count=0;
    for(;;){
     await ensure();const rows:Prisma.SourceRowGetPayload<Prisma.SourceRowDefaultArgs>[]=await db.sourceRow.findMany({where:{importId,storeId},orderBy:{id:"asc"},take:100,...(cursor?{cursor:{id:cursor},skip:1}:{})});if(!rows.length)break;
-    for(const row of rows)await cleanSourceRow(storeId,row.id,cleaningConfig(profile,storeId,imported.supplierId,row.sheetIndex));
+    await options.beforeCleaningBatch?.();
+    for(const sheetIndex of new Set(rows.map(row=>row.sheetIndex))){
+      await cleanSourceRows(storeId,rows.filter(row=>row.sheetIndex===sheetIndex).map(row=>row.id),cleaningConfig(profile,storeId,imported.supplierId,sheetIndex));
+    }
     cursor=rows.at(-1)!.id;count+=rows.length;await options.afterCleanBatch?.(count);
    }
    await checkpoint({phase:"GROUPING",attempts:0,errorCode:null,errorMessage:null});phase="GROUPING";
@@ -55,7 +59,7 @@ export async function processCatalogTask(storeId:string,importId:string,options:
    const hashes=sheets.map(s=>configIdentity(cleaningConfig(profile,storeId,imported.supplierId,s.sheetIndex)).configHash);
    const results=await db.rowCleaningResult.findMany({where:{storeId,cleanerVersion:CLEANER_VERSION,sourceRow:{importId},configHash:{in:hashes}},select:{id:true}});
    if(results.length!==imported.totalRows)throw Error("CLEANING_COUNT_MISMATCH");
-   await groupImport(storeId,importId,results.map(r=>r.id),groupingConfig,{onComplete:async tx=>{
+   await groupImport(storeId,importId,results.map(r=>r.id),groupingConfig,{beforeFamily:options.beforeGroupFamily,beforeFamilyCommit:options.beforeGroupFamilyCommit,onComplete:async tx=>{
     const revisions=await tx.productRevision.findMany({where:{storeId,originImportId:importId},select:{id:true,editVersion:true}});
     const runs=Object.fromEntries(revisions.map(r=>[r.id,{version:r.editVersion}]));
     const changed=await tx.catalogTask.updateMany({where,data:{phase:"ENRICHMENT",runs:json(runs),attempts:0,errorCode:null,errorMessage:null}});if(!changed.count)throw new Fenced();

@@ -558,4 +558,26 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **Application should do:** Retain durable per-row grouping outcomes, withhold unresolved values, surface coordinate-backed exceptions and generation blockers, and leave review proposals accessible without publishing.
 - **Why:** A green parsing status must not hide lost rows, invented prices or skipped enrichment.
 - **Implementation status:** Handled and tested for current conservative grouping and scheduling. Tests cover missing-family exceptions, conflicting prices remaining null, duplicates and row counts. The real 101-variant upload preserved 101 rows/cleaning results/grouping outcomes and one proposal; AI was blocked at the 100-source-link limit without a request. Import COMPLETED still means parsing only; catalog completion includes explicit blocked/failed outcomes.
-- **Test:** Pipeline integration counts and browser stage counters; compare physical coordinates and revision evidence. Full 10,000-row catalog throughput and arbitrary supplier formats are not established by these tests.
+- **Test:** Pipeline integration counts and browser stage counters; compare physical coordinates and revision evidence. Local 10,000-row parsing/cleaning/grouping and quota-backlog measurements are documented separately; full live-AI throughput and arbitrary supplier formats are not established.
+
+
+### EC-67 — A live coordinator loses renewals and overlaps its successor
+- **What happens:** The original process continues cleaning/grouping after its 90-second lease expires and another caller takes ownership.
+- **Application should do:** Preserve exact business identities/evidence and AI run bindings; reject stale coordinator checkpoint writes while permitting safe replay.
+- **Why:** Lease expiry does not stop the old process or roll back its in-flight family transaction.
+- **Implementation status:** Handled and tested for five deterministic overlap cases: cleaning/grouping with both completion orders and an in-flight family transaction. Injected renewal failures and a fake clock cause actual database lease takeover; existing transactions/idempotency/fences preserve counts, source evidence, merchant edits and published pointers. No new ownership/schema changes were needed for these cases. Arbitrary failure interleavings remain outside this evidence.
+- **Test:** Run catalog-overlap integration tests; assert fence 2, unchanged successor checkpoints, three product/proposal/AI identities, six variants/evidence/outcomes and one attempt per proposal.
+
+### EC-68 — Cleaning restarts with partial, stale or corrupted results
+- **What happens:** A worker dies after some rows are cleaned, configuration changes, or a stored interpretation disagrees with immutable source evidence.
+- **Application should do:** Recompute and verify bounded existing results, reuse exact identities only for the current source/version/configuration/content, insert missing results and reject corruption explicitly.
+- **Why:** A skip-existing shortcut can retain incorrect data; per-row replay queries also impose unnecessary restart cost.
+- **Implementation status:** Handled and tested for batches of at most 100, concurrent overlapping callers, partial replay, changed/reordered configuration, stale versions and corrupted normalized/evidence/issues/configuration payloads. Real Bun SIGKILL benchmarks reconcile both profiles at 1,000/10,000 rows while preserving saved result IDs. Full source scans and normalization CPU are still repeated; no persistent cleaning cursor was added.
+- **Test:** Cleaning integration tests and the isolated benchmark command in development notes. Verify exact source values/coordinates, current result uniqueness and no overwritten corruption.
+
+### EC-69 — Settled catalog work is mistaken for successful AI enrichment
+- **What happens:** All work is terminal even though some proposals are stale, failed or blocked; successfully enriched products still require merchant review.
+- **Application should do:** Display Processing settled and distinct successful/failed/stale/blocked/awaiting counts, with separate overlapping review-required product counts.
+- **Why:** A terminal coordinator state is not a quality, approval or publication guarantee.
+- **Implementation status:** Handled and tested through actual service outcomes for four proposals (one successful, one failed, one stale, one blocked; all four require review), plus dashboard component assertions. No new live Gemini performance claim is made.
+- **Test:** Pipeline integration tests and dashboard component tests; compare reported counts with persisted run/revision states.

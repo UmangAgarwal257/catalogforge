@@ -18,22 +18,49 @@ export function configIdentity(input: unknown) {
   return { configSnapshot, configHash };
 }
 
-export async function cleanSourceRow(storeId: string, sourceRowId: string, configInput: unknown) {
+export async function cleanSourceRows(storeId: string, sourceRowIds: string[], configInput: unknown) {
+  if (sourceRowIds.length > 100 || new Set(sourceRowIds).size !== sourceRowIds.length) throw new Error("Cleaning batches require at most 100 distinct source rows");
   const { configSnapshot, configHash } = configIdentity(configInput);
   if (storeId !== configSnapshot.storeId) throw new Error("Cleaning configuration store does not match the requested scope");
+  if (!sourceRowIds.length) return [];
   const db = getDb();
-  const source = await db.sourceRow.findFirst({ where: { id: sourceRowId, storeId }, include: { import: true } });
-  if (!source) throw new Error("Source row not found in the requested store");
-  if (source.import.supplierId !== configSnapshot.supplierId) throw new Error("Cleaning configuration supplier does not match the source import");
-  if (source.import.status !== "COMPLETED") throw new Error("Cleaning requires a completed spreadsheet ingestion");
-  const output = cleanRow(source, configSnapshot);
-  const data = { sourceRowId, storeId, cleanerVersion: CLEANER_VERSION, configHash, configSnapshot, ...output };
-  // ON CONFLICT DO NOTHING: retries cannot update old results or source evidence.
-  await db.rowCleaningResult.createMany({ data: [data], skipDuplicates: true });
-  const result = await db.rowCleaningResult.findUniqueOrThrow({ where: {
-    sourceRowId_cleanerVersion_configHash: { sourceRowId, cleanerVersion: CLEANER_VERSION, configHash }
-  } });
-  if (canonicalJson({ configSnapshot: result.configSnapshot, normalized: result.normalized, evidence: result.evidence, issues: result.issues, outcome: result.outcome }) !==
-      canonicalJson({ configSnapshot, ...output })) throw new Error("Existing cleaning result differs; no evidence or result was overwritten");
-  return result;
+  const sources = await db.sourceRow.findMany({ where: { id: { in: sourceRowIds }, storeId }, include: { import: true } });
+  if (sources.length !== sourceRowIds.length) throw new Error("Source row not found in the requested store");
+  const expected = new Map(sources.map(source => {
+    if (source.import.supplierId !== configSnapshot.supplierId) throw new Error("Cleaning configuration supplier does not match the source import");
+    if (source.import.status !== "COMPLETED") throw new Error("Cleaning requires a completed spreadsheet ingestion");
+    const output = cleanRow(source, configSnapshot);
+    return [source.id, { sourceRowId: source.id, storeId, cleanerVersion: CLEANER_VERSION, configHash, configSnapshot, ...output }] as const;
+  }));
+  const existing = await db.rowCleaningResult.findMany({ where: { sourceRowId: { in: sourceRowIds }, storeId, cleanerVersion: CLEANER_VERSION, configHash } });
+  type Result = (typeof existing)[number];
+  const verify = (result: Result) => {
+    const data = expected.get(result.sourceRowId);
+    if (!data || result.storeId !== storeId || result.cleanerVersion !== CLEANER_VERSION || result.configHash !== configHash ||
+        canonicalJson({ configSnapshot: result.configSnapshot, normalized: result.normalized, evidence: result.evidence, issues: result.issues, outcome: result.outcome }) !==
+        canonicalJson({ configSnapshot: data.configSnapshot, normalized: data.normalized, evidence: data.evidence, issues: data.issues, outcome: data.outcome })) {
+      throw new Error("Existing cleaning result differs; no evidence or result was overwritten");
+    }
+  };
+  // Presence alone is never trusted. Recompute from immutable source cells and
+  // validate all reusable rows before attempting any writes for this batch.
+  existing.forEach(verify);
+  const saved = new Map(existing.map(result => [result.sourceRowId, result]));
+  const missing = sourceRowIds.filter(id => !saved.has(id));
+  if (missing.length) {
+    await db.rowCleaningResult.createMany({ data: missing.map(id => expected.get(id)!), skipDuplicates: true });
+    // Concurrent callers may have won an insertion. Read and verify their exact
+    // values rather than overwriting them or assuming our insert succeeded.
+    const inserted = await db.rowCleaningResult.findMany({ where: { sourceRowId: { in: missing }, storeId, cleanerVersion: CLEANER_VERSION, configHash } });
+    inserted.forEach(result => { verify(result); saved.set(result.sourceRowId, result); });
+  }
+  return sourceRowIds.map(id => {
+    const result = saved.get(id);
+    if (!result) throw new Error("Cleaning checkpoint missing after persistence");
+    return result;
+  });
+}
+
+export async function cleanSourceRow(storeId: string, sourceRowId: string, configInput: unknown) {
+  return (await cleanSourceRows(storeId, [sourceRowId], configInput))[0]!;
 }

@@ -631,4 +631,79 @@ Automated pipeline integration tests upload through the HTTP handler and isolate
 
 Actual browser uploads on 2026-10-24 used ordinary apparel CSV and UK XLSX with electronics/home goods, not fixture-generated proposals. Three real gemini-3.5-flash-lite calls succeeded: T-shirt 3,276 input / 455 output tokens, 2,224 ms; USB-C cable 1,552 / 325, 2,946 ms; ceramic mug 1,541 / 530, 5,455 ms. These are provider-call measurements, not full pipeline benchmarks. Accepted text largely repeated source-backed content. Category suggestions (Apparel Tops, Electronics Cables & Adapters, Kitchen Drinkware) were withheld for merchant choice. Care restrictions stayed intact and the missing apparel price remained null. The XLSX displayed a real FREE_TIER_QUOTA pause and automatically resumed its already-bound mug run at 10:04:44.344 UTC after eligibility at 10:04:43.537 UTC, without a process restart.
 
-Configured formats only; no mapping builder, automatic semantic verification, production authentication/shared storage, or demonstrated 10,000-row full-catalog throughput. Cleaning writes are bounded but sequential; catalog concurrency is one. The existing 100-source-link/input-context enrichment limits are preserved: large families still form review proposals but can be blocked from AI generation without consuming quota. No translation, media, publication or storefront behavior is added.
+Configured formats only; no mapping builder, automatic semantic verification, production authentication/shared storage, or demonstrated live-AI throughput for 10,000 products. Cleaning uses verified batches of at most 100 rows; catalog concurrency is one. The existing 100-source-link/input-context enrichment limits are preserved: large families still form review proposals but can be blocked from AI generation without consuming quota. No translation, media, publication or storefront behavior is added.
+
+
+### Coordinator overlap and verified cleaning replay
+
+The catalog coordinator still uses the existing 90-second lease, 20-second renewal and fenced checkpoint updates. Deterministic integration tests keep the original caller alive, inject failed renewals, advance the test clock past expiry and let a successor claim fence 2. Cleaning and grouping are exercised with either caller finishing first; an additional case pauses inside a family transaction. Existing grouping transactions, complete-selection identities and AI run leases suffice in these tested interleavings: no new business fencing mechanism or schema was introduced. Tests check exact identities/evidence/outcomes, unchanged source cells, merchant titles and published snapshots, one AI attempt per proposal, and unchanged successor checkpoints after stale work. This is not exhaustive proof of every possible database failure/interleaving.
+
+Cleaning still scans the import from the beginning after interruption. Each page uses bounded source/result queries, verifies source ownership, current cleaner version and canonical configuration hash, recomputes normalized values/evidence/issues/outcome, then inserts only missing results with conflict protection. Existing result IDs remain unchanged. Configuration changes retain separate interpretations; stale versions are not reused. Corrupted current results fail explicitly without repair or overwriting evidence. CPU normalization is deliberately repeated; this optimization removes per-row database round trips, not all restart work.
+
+The import dashboard labels catalog COMPLETED **Processing settled**. Successful, failed, stale, blocked and awaiting enrichment are separate product counts. **Review required (products)** counts current DRAFT/NEEDS_REVIEW proposals and can overlap with successful enrichment; source-row attention counts are separately labelled. Neither settled nor enriched means merchant-approved or published.
+
+Run the complete existing integration suite in a disposable local database (the configured PostgreSQL role needs CREATE DATABASE):
+
+```bash
+bun --env-file=.env run tests/helpers/isolated-integration.ts
+```
+
+The helper applies existing migrations, runs the integration script and drops only its own database in finally. Existing tests use isolated Redis queues; shared Redis is never flushed. Live credentials are blanked in the child environment, and generation tests use injected deterministic responses. Quota tests must not run against retained live project usage.
+
+For focused tests:
+
+```bash
+node --env-file=.env node_modules/vitest/vitest.mjs run tests/catalog-overlap.integration.test.ts tests/cleaning.integration.test.ts tests/pipeline.integration.test.ts
+```
+
+### Local interruption benchmark
+
+```bash
+bun --env-file=.env run tests/helpers/catalog-benchmark.ts --label after --output /tmp/catalogforge-hardening-after.json
+```
+
+The Linux/Bun helper creates its own migrated database, private temporary files and store fixtures, then cleans them up. It parses Euro CSV and UK XLSX inputs with 1,000/10,000 rows, mixed apparel/home/electronics, repeated SKUs, missing prices and conflicting repeated prices. It SIGKILLs a real Bun child after half the cleaning results are saved, advances only that fixture's lease deadline, and resumes in a new process. Thus restart time excludes the normal 90-second eligibility delay and queue dispatch delay. File generation/upload registration and parent-side reconciliation are outside measured child stage times. Physical row/sheet coordinates, all raw cell values and headers, preserved cleaning IDs and database counts are asserted.
+
+Peak RSS is Linux VmHWM for the child process, including runtime/parser memory, not independent phase peaks, database/Redis memory or parent workbook creation. Half-cleaning time includes preflight. Restart cleaning includes preflight, verification of the saved half and insertion of the missing half. Grouping includes complete-import planning and per-family writes. Scheduling measures manifest traversal and the first quota pause; it does not measure AI generation throughput.
+
+Every sample uses an isolated synthetic quota reservation and a provider adapter that fails if invoked. Zero live Gemini calls are made. At 1,000 rows there are 500 proposals awaiting enrichment; at 10,000 there are 5,000. One run is bound and quota-paused in each case; the others retain durable scheduling intent without creating thousands of provider runs. This verifies backlog accounting, not real free-tier service capacity. Configured free-tier quotas and existing context limits remain unchanged.
+
+Observed local before/after samples on 2026-10-24 using Bun 1.3.12, Node v24.10.0 and local PostgreSQL (seconds, before → after; post-change samples ran without the verification suite/build):
+
+| Profile / records | Parse | First half cleaning | Restart cleaning | Grouping | Scheduling to quota pause | Restart process wall | Peak child RSS MiB |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| euro-catalog-v1 / 1000 | 0.64 → 0.52 | 2.43 → 0.45 | 3.83 → 0.76 | 5.00 → 5.08 | 0.40 → 0.42 | 9.54 → 6.54 | 386.5 → 399.7 |
+| euro-catalog-v1 / 10000 | 2.52 → 2.49 | 18.92 → 3.40 | 32.60 → 5.02 | 56.13 → 54.18 | 3.25 → 3.31 | 92.35 → 62.81 | 650.8 → 650.6 |
+| uk-trade-v1 / 1000 | 0.58 → 0.57 | 2.32 → 0.44 | 3.90 → 0.85 | 5.21 → 5.35 | 0.42 → 0.40 | 9.83 → 6.88 | 372.8 → 394.6 |
+| uk-trade-v1 / 10000 | 3.36 → 3.24 | 19.38 → 4.01 | 32.23 → 5.91 | 53.71 → 65.56 | 3.52 → 3.32 | 89.76 → 75.10 | 671.8 → 662.3 |
+
+Effective throughput (rows/second, before → after). First-half throughput uses newly persisted rows divided by the whole preflight-plus-half-cleaning time; restart throughput uses all rescanned rows, of which half already existed.
+
+| Profile / records | First half cleaning | Restart scan/verification + missing writes | Grouping outcomes |
+| --- | --- | --- | --- |
+| euro-catalog-v1 / 1000 | 206 → 1108 | 261 → 1321 | 200 → 197 |
+| euro-catalog-v1 / 10000 | 264 → 1471 | 307 → 1994 | 178 → 185 |
+| uk-trade-v1 / 1000 | 215 → 1134 | 256 → 1179 | 192 → 187 |
+| uk-trade-v1 / 10000 | 258 → 1248 | 310 → 1693 | 186 → 153 |
+
+Every before/after sample reconciled N source rows, N current cleaning results, N durable grouping outcomes and N evidence links; N/2 products/proposals and 0.9N variants/snapshots; zero pending grouping rows and zero published products. The saved N/2 cleaning IDs survived restart. Repeated rows account for the lower variant count. At 10,000 rows, resumed cleaning changed from 10,000 per-row source reads / 10,000 insert attempts / 10,000 result reads to 100 bounded source reads / 150 result batch reads / 50 missing-result insert batches (excluding other stage queries). Pure normalization still runs for all 10,000.
+
+These are single baseline and quiet post-change observations, not statistical performance guarantees. A first post-change run overlapped the full test suite/build and is retained only as a separate raw sample; grouping varied substantially. In the quiet UK 10,000-row sample grouping was slower (53.71 → 65.56 seconds), despite unchanged grouping code. Its cause is not established; no grouping performance improvement is claimed. Peak memory remains roughly 650–672 MiB at 10,000 rows and is not fixed by batching cleaning queries. The benchmark does not include HTTP latency, queue delay, actual 90-second recovery eligibility, merchant review or thousands of real AI generations. Raw JSON was written outside the repository under /tmp/catalogforge-hardening-{before,after,after-quiet}.json and is disposable.
+
+
+#### Mutually exclusive enrichment backlog reconciliation
+
+The benchmark's “500/5,000 awaiting enrichment” counts proposals, not provider requests or successful generations. Each proposal occupies exactly one enrichment scheduling bucket:
+
+| Proposal outcome | 1,000 source rows | 10,000 source rows |
+| --- | ---: | ---: |
+| No run bound yet; retained in the coordinator manifest | 499 | 4,999 |
+| Bound run in RETRY_WAIT / FREE_TIER_QUOTA | 1 | 1 |
+| Successfully enriched | 0 | 0 |
+| Failed or budget exhausted | 0 | 0 |
+| Stale | 0 | 0 |
+| Explicitly blocked | 0 | 0 |
+| Other bound/in-flight states | 0 | 0 |
+| **Total proposals** | **500** | **5,000** |
+
+Thus awaiting is 499 + 1 or 4,999 + 1. “Review required” is an independent merchant-review dimension and must not be added to these mutually exclusive enrichment buckets. The synthetic UNKNOWN attempt reserves capacity for the one bound run; it is not a real generation or a 5,000-request queue. The benchmark asserts manifest cardinality, checks every bound run's persisted state, reconciles all buckets to the proposal total and records the breakdown in its external JSON output. No live AI completion is claimed.
