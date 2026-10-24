@@ -6,7 +6,7 @@ import { TAXONOMY } from "@catalogforge/shared/catalog";
 import { minorToDecimal } from "./contracts";
 
 export function storefrontStoreId() {
-  return z.uuid().parse(process.env.NODE_ENV === "production" ? process.env.STOREFRONT_STORE_ID : process.env.STOREFRONT_STORE_ID ?? process.env.DEV_STORE_ID);
+  return z.uuid().parse(process.env.STOREFRONT_STORE_ID);
 }
 export const visibleProducts = (storeId: string): Prisma.ProductWhereInput => ({ storeId, archivedAt: null,
   publishedRevision: { is: { status: "APPROVED", publication: { isNot: null } } } });
@@ -22,8 +22,11 @@ export async function listPublished(storeId: string, page = 1, category?: string
     orderBy: { id: "asc" }, skip: (page - 1) * 20, take: 21, select: { id: true, publishedRevision: { select: {
       publication:{select:{mediaSnapshot:true,translationsSnapshot:true}}, title: true, categoryKey: true, variants: { orderBy: [{ priceMinor: "asc" }, { variantId: "asc" }], take: 1, select: { priceMinor: true, currency: true } }
     } } } });
-  return { products: rows.slice(0, 20).map(p => ({ id: p.id, title: translatedFields(p.publishedRevision!.publication?.translationsSnapshot,language)?.title??p.publishedRevision!.title!, image: mediaSnapshot(p.publishedRevision!.publication?.mediaSnapshot)[0]??null, categoryKey: p.publishedRevision!.categoryKey!,
-    priceMinor: p.publishedRevision!.variants[0]!.priceMinor!.toString(), currency: p.publishedRevision!.variants[0]!.currency! })), hasMore: rows.length > 20 };
+  return { products: rows.slice(0, 20).map(p => {
+    const translation = translatedFields(p.publishedRevision!.publication?.translationsSnapshot, language);
+    return { id: p.id, title: translation?.title ?? p.publishedRevision!.title!, language: translation ? localeFrom(language) : "en", image: mediaSnapshot(p.publishedRevision!.publication?.mediaSnapshot)[0] ?? null, categoryKey: p.publishedRevision!.categoryKey!,
+      priceMinor: p.publishedRevision!.variants[0]!.priceMinor!.toString(), currency: p.publishedRevision!.variants[0]!.currency! };
+  }), hasMore: rows.length > 20 };
 }
 export async function publishedProduct(storeId: string, productId: string,language="en") {
   if (!z.uuid().safeParse(productId).success) return null;

@@ -108,7 +108,7 @@ export function ImportDashboard({initialImportId}:{initialImportId?:string}={}) 
   const activeImports = history.data?.imports.filter(active).length ?? 0;
   const completedImports = history.data?.imports.filter((item) => item.status === "COMPLETED").length ?? 0;
   return <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-10"><div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]"><CatalogNav /><div className="min-w-0 space-y-8">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">Merchant workspace</p><h1 className="text-3xl font-semibold tracking-tight">Supplier imports</h1><p className="mt-2 max-w-prose text-sm text-muted-foreground">Bring in a supplier catalog, preserve its source records and move products through review.</p></div><span className="rounded-md border bg-muted px-3 py-2 text-xs font-medium">Local development only</span></header>
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">Merchant workspace</p><h1 className="text-3xl font-semibold tracking-tight">Supplier imports</h1><p className="mt-2 max-w-prose text-sm text-muted-foreground">Bring in a supplier catalog, preserve its source records and move products through review.</p></div></header>
     <section aria-label="Current history page" className="grid gap-3 sm:grid-cols-3">
       <Link href="#import-history" className="rounded-xl border bg-background p-4 shadow-sm transition hover:border-primary"><p className="text-sm text-muted-foreground">Imports in view</p><p className="mt-1 text-2xl font-semibold">{history.data?.imports.length ?? "—"}</p><p className="mt-1 text-xs text-muted-foreground">Open history to inspect each run</p></Link>
       <Link href="#import-history" className="rounded-xl border bg-background p-4 shadow-sm transition hover:border-primary"><p className="text-sm text-muted-foreground">Unsettled on this page</p><p className="mt-1 text-2xl font-semibold">{history.data ? activeImports : "—"}</p><p className="mt-1 text-xs text-muted-foreground">Includes work waiting for capacity</p></Link>
@@ -124,7 +124,7 @@ export function ImportDashboard({initialImportId}:{initialImportId?:string}={}) 
             <select id="supplier" className={control} value={supplier?.id ?? ""} disabled={uploading || suppliers.loading || !suppliers.data?.suppliers.length} onChange={(event) => { const item = suppliers.data?.suppliers.find((item) => item.id === event.target.value); setSupplier(item ?? null); resetAttempt(); }} aria-describedby="supplier-hint">
               <option value="">Choose a supplier</option>{supplier && !selectedSupplierOnPage && <option value={supplier.id}>{supplier.name}</option>}{suppliers.data?.suppliers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
-            <p id="supplier-hint" className="mt-2 text-xs text-muted-foreground">Only suppliers in the configured development store are available.</p>
+            <p id="supplier-hint" className="mt-2 text-xs text-muted-foreground">Only suppliers belonging to your account’s assigned store are available.</p>
             {suppliers.loading && <Loading label="Loading suppliers…" />}
             {suppliers.error && <div className="mt-3"><Notice retry={suppliers.refresh}>{suppliers.error}</Notice></div>}
             {suppliers.data?.suppliers.length === 0 && <p className="mt-3 text-sm">No suppliers found. Create a supplier below to get started.</p>}
@@ -172,6 +172,6 @@ export function ImportDashboard({initialImportId}:{initialImportId?:string}={}) 
         <div className="flex flex-wrap items-end justify-between gap-3"><div><label htmlFor="row-size" className="mb-1 block text-sm">Rows per page</label><select id="row-size" value={rowSize} onChange={(event) => { focusSource.current = true; setRowSize(Number(event.target.value)); setRowPage(1); }} className={control}><option value={10}>10</option><option value={25}>25</option></select></div><Pagination label="source rows" page={rowPage} hasMore={rowPage * rowSize < imported._count.sourceRows} busy={detail.loading} change={(page) => { focusSource.current = true; setRowPage(page); }} /></div>
       </div>}
     </section>
-    <footer className="border-t pt-4 text-xs text-muted-foreground">Unauthenticated local development interface. Keep it on localhost; public deployment requires access controls and shared private storage.</footer>
+    <footer className="border-t pt-4 text-xs text-muted-foreground">Imports are scoped to the store assigned to your signed-in account. Processing completion means spreadsheet ingestion finished; catalog review and publication are separate.</footer>
   </div></div></main>;
 }

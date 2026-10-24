@@ -1,20 +1,20 @@
 import { publishRevision } from "./publication";
 import { z } from "zod";
-import { developmentConfig, checkBrowserOrigin } from "@catalogforge/ingestion/http";
 import { IngestionError } from "@catalogforge/ingestion/contracts";
 import { ReviewError } from "./contracts";
 import { listReviews, reviewDetail, reviewEvidence, mutateReview } from "./service";
-export async function reviewEndpoint(request: Request, id?: string, resource?: "evidence" | "approve" | "reject" | "publish") {
+export async function reviewEndpoint(request: Request, id?: string, resource?: "evidence" | "approve" | "reject" | "publish", scopedStoreId?: string) {
   const headers = { "Cache-Control": "no-store" };
   try {
-    const config = developmentConfig(); checkBrowserOrigin(request);
+    if (!scopedStoreId) throw new IngestionError("STORE_SCOPE_REQUIRED", "Authenticated store scope is required.", 401);
+    const storeId = scopedStoreId;
     if (id) z.uuid().parse(id);
     if (request.method === "GET") {
       const query = new URL(request.url).searchParams;
       const p = z.object({ page: z.coerce.number().int().min(1).max(100000), pageSize: z.coerce.number().refine(n => [10,25,50,100].includes(n)),
         search: z.string().max(200), status: z.enum(["OPEN", "ALL", "DRAFT", "NEEDS_REVIEW", "APPROVED", "REJECTED"]) }).parse({ page: query.get("page") ?? 1, pageSize: query.get("pageSize") ?? 25, search: query.get("search") ?? "", status: query.get("status") ?? "OPEN" });
       if (resource && resource !== "evidence") return new Response(null, { status: 405, headers });
-      return Response.json(id ? resource === "evidence" ? await reviewEvidence(config.DEV_STORE_ID,id,p.page,p.pageSize) : await reviewDetail(config.DEV_STORE_ID,id) : await listReviews(config.DEV_STORE_ID,p.page,p.pageSize,p.search,p.status), { headers });
+      return Response.json(id ? resource === "evidence" ? await reviewEvidence(storeId,id,p.page,p.pageSize) : await reviewDetail(storeId,id) : await listReviews(storeId,p.page,p.pageSize,p.search,p.status), { headers });
     }
     if (!id || (request.method !== "PATCH" || resource) && (request.method !== "POST" || !["approve", "reject", "publish"].includes(resource ?? ""))) return new Response(null,{status:405, headers});
     if (!request.headers.get("content-type")?.startsWith("application/json") || !request.body) throw new ReviewError("INVALID_BODY",400,"Send a JSON request.");
@@ -22,7 +22,7 @@ export async function reviewEndpoint(request: Request, id?: string, resource?: "
     try { for (;;) { const {value,done}=await reader.read(); if(done) break; size+=value.length; if(size>128*1024) { await reader.cancel(); throw new ReviewError("BODY_TOO_LARGE",413,"Review request exceeds 128 KiB."); } chunks.push(value); } } finally { reader.releaseLock(); }
     let body:unknown;
     try { body=JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new ReviewError("INVALID_JSON",400,"Request is not valid JSON."); }
-    const result=resource==="publish"?await publishRevision(config.DEV_STORE_ID,id,body):await mutateReview(config.DEV_STORE_ID,id,resource==="approve"?"APPROVE":resource==="reject"?"REJECT":"EDIT",body);
+    const result=resource==="publish"?await publishRevision(storeId,id,body):await mutateReview(storeId,id,resource==="approve"?"APPROVE":resource==="reject"?"REJECT":"EDIT",body);
     return Response.json(result,{headers});
   } catch(error) {
     if(error instanceof ReviewError) return Response.json({error:{code:error.code,message:error.message,issues:error.issues}},{status:error.status,headers});

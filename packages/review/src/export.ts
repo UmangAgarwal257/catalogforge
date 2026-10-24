@@ -1,6 +1,5 @@
 import { getDb } from "@catalogforge/db";
 import { z } from "zod";
-import { developmentConfig, checkBrowserOrigin } from "@catalogforge/ingestion/http";
 import { IngestionError } from "@catalogforge/ingestion/contracts";
 import { ReviewError, minorToDecimal } from "./contracts";
 import { visibleProducts } from "./catalog";
@@ -66,16 +65,17 @@ export async function* catalogExport(storeId: string, revisionIds: string[], for
   }
   if (format === "json") yield "]\n";
 }
-export async function exportEndpoint(request: Request) {
+export async function exportEndpoint(request: Request, scopedStoreId?: string) {
   const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
   try {
-    const config = developmentConfig(); checkBrowserOrigin(request);
+    if (!scopedStoreId) throw new ReviewError("STORE_SCOPE_REQUIRED", 401, "Authenticated store scope is required.");
+    const storeId = scopedStoreId;
     if (request.method !== "GET") return new Response(null, {status:405,headers});
     const q = new URL(request.url).searchParams;
     const format = z.enum(["csv","json","shopify"]).parse(q.get("format")??"csv");
     const currency = q.has("currency") ? z.enum(["EUR","GBP","USD"]).parse(q.get("currency")) : undefined;
-    const captured = await captureExport(config.DEV_STORE_ID, format, currency);
-    const iterator = catalogExport(config.DEV_STORE_ID,captured.revisionIds,format,captured.currency);
+    const captured = await captureExport(storeId, format, currency);
+    const iterator = catalogExport(storeId,captured.revisionIds,format,captured.currency);
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({ async pull(controller) {
       try { const {value,done}=await iterator.next(); if(done)controller.close();else controller.enqueue(encoder.encode(value)); }

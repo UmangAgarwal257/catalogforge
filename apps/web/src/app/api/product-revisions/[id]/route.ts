@@ -1,5 +1,6 @@
 import { reviewEndpoint } from "@catalogforge/review/http";
+import { withMerchantStore } from "../../../../lib/merchant-auth";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
-export async function GET(request:Request,context:{params:Promise<{id:string}>}) { return reviewEndpoint(request,(await context.params).id,undefined); }
-export async function PATCH(request:Request,context:{params:Promise<{id:string}>}) { return reviewEndpoint(request,(await context.params).id,undefined); }
+export async function GET(request:Request,context:{params:Promise<{id:string}>}) { const {id}=await context.params;return withMerchantStore(request,storeId=>reviewEndpoint(request,id,undefined,storeId)); }
+export async function PATCH(request:Request,context:{params:Promise<{id:string}>}) { const {id}=await context.params;return withMerchantStore(request,storeId=>reviewEndpoint(request,id,undefined,storeId)); }

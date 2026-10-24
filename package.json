@@ -9,11 +9,7 @@
   ],
   "scripts": {
     "dev": "bun run --cwd apps/web dev",
-    "dev:worker": "bun --env-file=.env run apps/worker/src/index.ts",
     "build": "bun run db:generate && bun run --cwd apps/web build",
-    "infra:up": "docker compose up -d --wait",
-    "infra:down": "docker compose down",
-    "infra:status": "docker compose ps",
     "db:generate": "bun run --cwd packages/db generate",
     "db:migrate": "bun run --cwd packages/db migrate",
     "db:deploy": "bun run --cwd packages/db deploy",
@@ -22,11 +18,16 @@
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/db --noEmit && tsc -p packages/ingestion --noEmit && tsc -p packages/cleaning --noEmit && tsc -p packages/grouping --noEmit && tsc -p packages/enrichment --noEmit && tsc -p packages/review --noEmit && tsc -p packages/pipeline --noEmit && tsc -p apps/worker --noEmit && tsc -p apps/web --noEmit && tsc -p tsconfig.tools.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
-    "test:integration": "bun --env-file=.env run test:integration:run",
+    "test:integration": "bun --env-file=.env run tests/helpers/isolated-integration.ts",
     "test:integration:run": "vitest run .integration.test.ts --no-file-parallelism",
-    "db:seed:dev": "bun --env-file=.env run packages/db/src/seed-dev.ts",
+    "db:grant-member": "bun --env-file=.env run packages/db/src/grant-store-member.ts",
+    "db:provision-store": "bun --env-file=.env run packages/db/src/provision-store.ts",
+    "start:worker": "bun run --cwd apps/worker start",
     "enrich:one": "bun --env-file=.env run apps/worker/src/enrich-one.ts",
     "review:fixture": "bun --env-file=.env run apps/worker/src/review-fixture.ts"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   },
   "devDependencies": {
     "@catalogforge/db": "workspace:*",

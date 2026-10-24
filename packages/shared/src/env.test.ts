@@ -4,7 +4,8 @@ import { parseEnv, webEnvSchema, workerEnvSchema } from "./env";
 const valid = {
   DATABASE_URL: "postgresql://test:local@127.0.0.1:5432/test",
   REDIS_URL: "redis://127.0.0.1:6379",
-  WEB_APP_URL: "http://localhost:3000"
+  WEB_APP_URL: "http://localhost:3000",
+  WORKER_STORE_ID: "00000000-0000-4000-8000-000000000001"
 };
 
 describe("environment validation", () => {

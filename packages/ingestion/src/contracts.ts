@@ -1,10 +1,7 @@
 import { z } from "zod";
-import { isAbsolute } from "node:path";
 import { MAX_UPLOAD_BYTES } from "./api-contracts";
 export { rawCellSchema } from "./api-contracts";
 import { rawCellSchema } from "./api-contracts";
-
-export const localSettingsSchema = z.object({ DEV_STORE_ID: z.uuid(), LOCAL_UPLOAD_DIR: z.string().refine(isAbsolute) });
 
 export const LIMITS = {
   fileBytes: MAX_UPLOAD_BYTES,

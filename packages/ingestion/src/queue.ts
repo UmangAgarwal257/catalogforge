@@ -50,7 +50,7 @@ export async function dispatchPending(queue: Queue, storeId: string): Promise<vo
         await db.import.updateMany({ where: { id: entry.importId, status: "PENDING", errorCode: "DISPATCH_UNAVAILABLE" }, data: { errorCode: null, errorMessage: null } });
       } catch {
         await db.import.updateMany({ where: { id: entry.importId, status: "PENDING" }, data: {
-          errorCode: "DISPATCH_UNAVAILABLE", errorMessage: "Waiting for the local parse queue. Dispatch will retry automatically."
+          errorCode: "DISPATCH_UNAVAILABLE", errorMessage: "Waiting for the parse queue. Dispatch will retry automatically."
         } });
         throw new Error("Parse dispatch unavailable; durable work will be retried.");
       }

@@ -12,7 +12,7 @@ try {
  } else {
   const fixture=await createTerracottaFixture();
   console.log(JSON.stringify({...fixture,reviewPath:`/products/${fixture.productId}/revisions/${fixture.revisionId}`},null,2));
-  console.log(`Retained fixture. Use DEV_STORE_ID=${fixture.storeId} bun run dev --port 3002 for its isolated review UI.`);
+  console.log(`Retained review fixture for store ${fixture.storeId}. Assign an authenticated account to the store to review it in the application.`);
   console.log(`Generate with REAL Gemini: bun run enrich:one ${fixture.storeId} ${fixture.revisionId}`);
   console.log(`Cleanup: bun run review:fixture --cleanup ${fixture.storeId}`);
  }

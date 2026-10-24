@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { getDb, findVariantBySku } from "@catalogforge/db";
-import { LocalOriginalStorage, sha256 } from "@catalogforge/ingestion/storage";
+import { sha256, type OriginalStorage } from "@catalogforge/ingestion/storage";
 import { z } from "zod";
 import { ReviewError } from "./contracts";
 import { hash, json } from "./validation";
@@ -23,7 +23,7 @@ export async function verifyImage(bytes: Uint8Array) {
   } catch { throw new ReviewError("INVALID_IMAGE",422,"Photo is malformed, animated, truncated, or exceeds 24 megapixels."); }
 }
 export function safeFilename(name:string) { return name.replaceAll("\\","/").split("/").at(-1)!.replace(/[\u0000-\u001f\u007f]/g,"").slice(0,200)||"photo"; }
-export async function uploadImage(storeId:string, storage:LocalOriginalStorage, filename:string, bytes:Uint8Array) {
+export async function uploadImage(storeId:string, storage:OriginalStorage, filename:string, bytes:Uint8Array) {
   const fingerprint=sha256(bytes);
   const existing=await getDb().mediaAsset.findUnique({where:{storeId_sha256:{storeId,sha256:fingerprint}}});
   if(existing)return {asset:publicAsset(existing),reused:true};
@@ -35,7 +35,7 @@ export async function uploadImage(storeId:string, storage:LocalOriginalStorage, 
       await tx.$queryRaw`SELECT id FROM "Store" WHERE id=${storeId}::uuid FOR UPDATE`;
       const duplicate=await tx.mediaAsset.findUnique({where:{storeId_sha256:{storeId,sha256:fingerprint}}});
       if(duplicate)return duplicate;
-      if(await tx.mediaAsset.count({where:{storeId}})>=IMAGE_LIMITS.assets)throw new ReviewError("IMAGE_QUOTA",422,"This development store has reached its 2,000-photo limit.");
+      if(await tx.mediaAsset.count({where:{storeId}})>=IMAGE_LIMITS.assets)throw new ReviewError("IMAGE_QUOTA",422,"This store has reached its 2,000-photo limit.");
       return tx.mediaAsset.create({data:{storeId,sha256:fingerprint,filename:safeFilename(filename),storageKey,previewKey:previewKey!,format:verified.format,width:verified.width,height:verified.height,bytes:bytes.length}});
     });
     if(asset.storageKey!==storageKey){await storage.remove(storageKey);await storage.remove(previewKey);}

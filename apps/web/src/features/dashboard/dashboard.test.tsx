@@ -4,7 +4,7 @@ import {render,screen,cleanup,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {Dashboard} from "./dashboard";
 import {ReviewWorkspace} from "../review/workspaces";
-vi.mock("next/navigation",()=>({usePathname:()=>"/dashboard"}));
+vi.mock("next/navigation",()=>({usePathname:()=>"/dashboard",useRouter:()=>({replace:vi.fn(),refresh:vi.fn()})}));
 const fetchMock=vi.fn();beforeEach(()=>vi.stubGlobal("fetch",fetchMock));afterEach(()=>{cleanup();vi.unstubAllGlobals();fetchMock.mockReset();});
 const data={kpis:{totalProducts:3,needingReview:2,approved:1,published:1,activeImports:1,failedImports:1,quotaPaused:1},imports:[],actions:[],failures:[{id:"failed-id",originalFilename:"bad.csv",status:"FAILED",errorMessage:"Malformed source file.",catalogTask:null}]};
 it("recovers from a dashboard error without keeping the error screen after a successful retry",async()=>{

@@ -1,5 +1,4 @@
 import {Suspense} from "react";
-import {LanguageSwitcher} from "../../features/storefront/language-switcher";
-import Link from "next/link";
+import {StorefrontChrome} from "../../features/storefront/chrome";
 export const dynamic="force-dynamic";
-export default function ShopLayout({children}:{children:React.ReactNode}) {return <div className="min-h-screen bg-background text-foreground"><header className="border-b"><nav aria-label="Store navigation" className="mx-auto flex max-w-6xl items-center flex-wrap justify-between gap-4 px-4 py-6 sm:px-8"><Link href="/shop" className="text-xl font-semibold tracking-tight">CatalogForge<span className="ml-2 text-xs font-normal text-muted-foreground">Shop</span></Link><Suspense><LanguageSwitcher/></Suspense></nav></header><main className="mx-auto max-w-6xl px-4 py-8 sm:px-8 sm:py-12">{children}</main><footer className="mx-auto max-w-6xl border-t px-4 py-8 text-sm text-muted-foreground sm:px-8">Published merchant catalog · Ordering is not available in this preview.</footer></div>;}
+export default function ShopLayout({children}:{children:React.ReactNode}) {return <Suspense fallback={<div className="min-h-screen bg-background text-foreground"/>}><StorefrontChrome>{children}</StorefrontChrome></Suspense>;}

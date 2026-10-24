@@ -6,7 +6,7 @@ import { disconnectDatabase, getDb } from "@catalogforge/db";
 import { registerImport, importDetails } from "@catalogforge/ingestion/imports";
 import { LocalOriginalStorage, readOriginal } from "@catalogforge/ingestion/storage";
 import { processParseImport, failParseRun, RetryableParseError } from "@catalogforge/ingestion/processing";
-import { importEndpoint } from "@catalogforge/ingestion/http";
+import { importEndpoint as runImportEndpoint } from "@catalogforge/ingestion/http";
 import { LIMITS } from "@catalogforge/ingestion/contracts";
 import ExcelJS from "exceljs";
 import { Readable } from "node:stream";
@@ -19,6 +19,7 @@ let directory: string;
 let storage: LocalOriginalStorage;
 const stores: string[] = [];
 const csv = "SKU,Notes,Notes\r\n00123,first,second\r\n00123,first,second\r\n00456,\"two\nlines\",last\r\n";
+const importEndpoint = (request: Request, id?: string, resource: "imports" | "suppliers" = "imports", scope = storeId) => runImportEndpoint(request, id, resource, scope, storage);
 
 async function register(text = csv, key = crypto.randomUUID()) {
   return (await registerImport(storage, { storeId, supplierId, idempotencyKey: key, filename: "supplier.csv", bytes: Buffer.from(text) })).imported;
@@ -195,14 +196,7 @@ describe("two-pass persistence and fencing", () => {
   });
 });
 
-describe("local import HTTP contract", () => {
-  beforeEach(() => {
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("DEV_INGESTION_ENABLED", "true");
-    vi.stubEnv("DEV_STORE_ID", storeId);
-    vi.stubEnv("LOCAL_UPLOAD_DIR", directory);
-    vi.stubEnv("VERCEL", "");
-  });
+describe("authenticated import handler contract", () => {
   function upload(filename = "supplier.csv", text = csv, key = "request-1") {
     const form = new FormData();
     form.set("file", new File([text], filename));
@@ -225,22 +219,14 @@ describe("local import HTTP contract", () => {
     expect(await (await page(3)).json()).toMatchObject({ suppliers: [], hasMore: false });
     expect((await importEndpoint(new Request("http://localhost:3000/api/suppliers?pageSize=101"), undefined, "suppliers")).status).toBe(400);
   });
-  it("protects supplier reads with the same local development and origin restrictions", async () => {
-    const read = (url = "http://localhost:3000/api/suppliers", headers = {}) => importEndpoint(new Request(url, { headers }), undefined, "suppliers");
-    vi.stubEnv("NODE_ENV", "production"); expect((await read()).status).toBe(404);
-    vi.stubEnv("NODE_ENV", "development"); vi.stubEnv("VERCEL", "1"); expect((await read()).status).toBe(404);
-    vi.stubEnv("VERCEL", ""); vi.stubEnv("DEV_INGESTION_ENABLED", "false"); expect((await read()).status).toBe(404);
-    vi.stubEnv("DEV_INGESTION_ENABLED", "true"); expect((await read("http://example.com/api/suppliers")).status).toBe(403);
-    expect((await read(undefined, { origin: "https://example.com" })).status).toBe(403);
-    expect((await importEndpoint(new Request("http://localhost:3000/api/suppliers", { method: "DELETE" }), undefined, "suppliers")).status).toBe(405);
-  });
-  it("uses the validated browser host when Next.js canonicalizes its request URL", async () => {
-    const request = (host: string, origin: string) => new Request("http://localhost:3000/api/suppliers", { headers: { host, origin } });
-    expect((await importEndpoint(request("127.0.0.1:3000", "http://127.0.0.1:3000"), undefined, "suppliers")).status).toBe(200);
-    expect((await importEndpoint(request("localhost:3000", "http://localhost:3000"), undefined, "suppliers")).status).toBe(200);
-    for (const [host, origin] of [["evil.example:3000", "http://evil.example:3000"], ["127.0.0.1:3001", "http://127.0.0.1:3001"], ["127.0.0.1:3000", "http://localhost:3000"], ["127.0.0.1:3000", "https://evil.example"]]) {
-      expect((await importEndpoint(request(host!, origin!), undefined, "suppliers")).status).toBe(403);
-    }
+  it("requires explicit server-derived store scope and never uses a development store", async () => {
+    vi.stubEnv("DEV_INGESTION_ENABLED", "true"); vi.stubEnv("DEV_STORE_ID", storeId);
+    const request = new Request("https://catalog.example/api/suppliers");
+    expect((await runImportEndpoint(request, undefined, "suppliers")).status).toBe(401);
+    expect((await importEndpoint(request, undefined, "suppliers")).status).toBe(200);
+    const other = await db.store.create({ data: { name: "Unrelated supplier scope" } }); stores.push(other.id);
+    await expect((await importEndpoint(request, undefined, "suppliers", other.id)).json()).resolves.toMatchObject({ suppliers: [], hasMore: false });
+    expect((await importEndpoint(new Request(request, { method: "DELETE" }), undefined, "suppliers")).status).toBe(405);
   });
   it("returns precise hasMore for full history pages and bounded source pages", async () => {
     const one = await register(csv); const two = await register(csv);
@@ -274,7 +260,7 @@ describe("local import HTTP contract", () => {
     const other = await db.store.create({ data: { name: "Other" } });
     stores.push(other.id);
     vi.stubEnv("DEV_STORE_ID", other.id);
-    expect((await importEndpoint(new Request("http://localhost:3000/api/imports"), body.importId)).status).toBe(404);
+    expect((await importEndpoint(new Request("https://catalog.example/api/imports"), body.importId, "imports", other.id)).status).toBe(404);
   });
   it("rejects invalid fields, types, ids and pagination without registering work", async () => {
     expect((await importEndpoint(upload("payload.exe"))).status).toBe(415);
@@ -291,19 +277,8 @@ describe("local import HTTP contract", () => {
     expect((await importEndpoint(request)).status).toBe(413);
     expect(await db.import.count({ where: { storeId } })).toBe(0);
   });
-  it("blocks production, Vercel, disabled access, remote hosts and cross-origin requests", async () => {
-    const local = () => new Request("http://localhost:3000/api/imports");
-    vi.stubEnv("NODE_ENV", "production");
-    expect((await importEndpoint(local())).status).toBe(404);
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("VERCEL", "1");
-    expect((await importEndpoint(local())).status).toBe(404);
-    vi.stubEnv("VERCEL", "");
-    vi.stubEnv("DEV_INGESTION_ENABLED", "false");
-    expect((await importEndpoint(local())).status).toBe(404);
-    vi.stubEnv("DEV_INGESTION_ENABLED", "true");
-    expect((await importEndpoint(new Request("http://example.com/api/imports"))).status).toBe(403);
-    expect((await importEndpoint(new Request(local(), { headers: { origin: "https://example.com" } }))).status).toBe(403);
-    expect((await importEndpoint(new Request(local(), { headers: { "sec-fetch-site": "cross-site" } }))).status).toBe(403);
+  it("rejects an unscoped import request even when a development store is configured", async () => {
+    vi.stubEnv("DEV_INGESTION_ENABLED", "true"); vi.stubEnv("DEV_STORE_ID", storeId);
+    expect((await runImportEndpoint(new Request("https://catalog.example/api/imports"))).status).toBe(401);
   });
 });

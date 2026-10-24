@@ -17,7 +17,8 @@ export const webEnvSchema = databaseEnvSchema.extend({
 });
 export const workerEnvSchema = databaseEnvSchema.extend({
   REDIS_URL: redisUrl,
-  WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(3001)
+  WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  WORKER_STORE_ID: z.uuid()
 });
 
 // Report variable names only: validation errors must not echo credentials.

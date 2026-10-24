@@ -77,11 +77,15 @@ it("quota-pauses without provider attempts, respects due time and shares project
  // Advance only the test clock; never rewrite immutable provider accounting.
  vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date(Date.now()+86401000));await processTranslation(f.storeId,t.id,call);expect(call).toHaveBeenCalledTimes(1);
 });
-it("keeps all merchant endpoints local and prevents private image paths leaking",async()=>{
- const a=await image();vi.stubEnv("NODE_ENV","development");vi.stubEnv("DEV_INGESTION_ENABLED","true");vi.stubEnv("DEV_STORE_ID",f.storeId);vi.stubEnv("LOCAL_UPLOAD_DIR",directory);
- expect((await extrasEndpoint(new Request("http://localhost/api/media",{headers:{origin:"https://attacker.example"}}),"media")).status).toBe(403);
- const response=await extrasEndpoint(new Request("http://localhost/api/media"),"media");expect(response.status).toBe(200);expect(await response.text()).not.toContain(directory);
- vi.stubEnv("NODE_ENV","production");vi.stubEnv("STOREFRONT_STORE_ID",f.storeId);expect((await extrasEndpoint(new Request("http://localhost/api/media"),"media")).status).toBe(404);expect((await mediaFile(new Request("http://localhost/api/media/anything"),a.asset.id)).status).toBe(404);
+it("requires authenticated scope for media management and keeps private image paths hidden",async()=>{
+ const a=await image();
+ expect((await extrasEndpoint(new Request("https://catalog.example/api/media"),"media")).status).toBe(401);
+ const response=await extrasEndpoint(new Request("https://catalog.example/api/media"),"media",undefined,f.storeId);expect(response.status).toBe(200);expect(await response.text()).not.toContain(directory);
+ expect((await mediaFile(new Request(`https://catalog.example/api/media/${a.asset.id}?scope=review`),a.asset.id)).status).toBe(401);
+ expect((await mediaFile(new Request(`https://catalog.example/api/media/${a.asset.id}?scope=review`),a.asset.id,f.storeId,new LocalOriginalStorage(directory))).status).toBe(200);
+ // An uploaded but unpublished asset must not be served from the public image route.
+ vi.stubEnv("STOREFRONT_STORE_ID",f.storeId);expect((await mediaFile(new Request(`https://catalog.example/api/media/${a.asset.id}`),a.asset.id,undefined,new LocalOriginalStorage(directory))).status).toBe(404);
+ expect((await mediaFile(new Request("https://catalog.example/api/media/00000000-0000-4000-8000-000000000099"),"00000000-0000-4000-8000-000000000099")).status).toBe(404);
 });
 it("resumes an expired translation lease and counts interrupted calls without duplicate application",async()=>{
  const r=await approve(),t=await requestTranslation(f.storeId,r.id,"fr",r.editVersion,testPolicy);

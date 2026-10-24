@@ -4,8 +4,8 @@ import { disconnectDatabase } from "@catalogforge/db";
 import { env } from "./env";
 import { checkReadiness } from "./health";
 import { parseProducer, parseConsumer, dispatchPending } from "@catalogforge/ingestion/queue";
-import { LocalOriginalStorage } from "@catalogforge/ingestion/storage";
-import { localSettingsSchema } from "@catalogforge/ingestion/contracts";
+import { createOriginalStorage, SupabaseOriginalStorage } from "@catalogforge/ingestion/storage";
+import { geminiPolicyFromEnv } from "@catalogforge/enrichment/config";
 
 const redis = new Redis(env.REDIS_URL, {
   lazyConnect: true,
@@ -15,7 +15,7 @@ const redis = new Redis(env.REDIS_URL, {
   maxRetriesPerRequest: 1,
   retryStrategy: (attempt) => Math.min(attempt * 250, 5000)
 });
-redis.on("error", () => console.error("Worker Redis connection error; check local infrastructure."));
+redis.on("error", () => console.error("Worker Redis connection error; check the configured Redis service."));
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 let shuttingDown = false;
@@ -59,30 +59,29 @@ process.on("SIGTERM", () => void shutdown(0));
 try {
   await redis.connect();
   if ((await checkReadiness(redis)).status !== "ok") throw new Error("Dependencies unavailable");
-  if (process.env.DEV_INGESTION_ENABLED === "true") {
-    if (process.env.NODE_ENV === "production" || process.env.VERCEL) throw new Error("Local ingestion cannot run in production.");
-    const config = localSettingsSchema.safeParse(process.env);
-    if (!config.success) throw new Error("Set DEV_STORE_ID and an absolute LOCAL_UPLOAD_DIR.");
-    const storage = new LocalOriginalStorage(config.data.LOCAL_UPLOAD_DIR);
-    const parseQueue = `spreadsheet-${config.data.DEV_STORE_ID}-v1`;
-    producer = parseProducer(env.REDIS_URL, parseQueue);
-    consumer = parseConsumer(env.REDIS_URL, config.data.DEV_STORE_ID, storage, parseQueue);
-    catalogDispatch = catalogProducer(env.REDIS_URL, config.data.DEV_STORE_ID);
-    catalogWorker = catalogConsumer(env.REDIS_URL, config.data.DEV_STORE_ID);
-    await Promise.all([consumer.worker.waitUntilReady(), catalogWorker.worker.waitUntilReady()]);
-    const tick = () => {
-      if (dispatching || shuttingDown) return;
-      dispatching = Promise.allSettled([dispatchPending(producer!.queue, config.data.DEV_STORE_ID), dispatchCatalog(catalogDispatch!.queue, config.data.DEV_STORE_ID)]).then(results => { if (results.some(result => result.status === "rejected")) throw new Error("Dispatch temporarily unavailable"); })
-        .catch(() => console.error("Worker dispatch is temporarily unavailable; durable work is retained."))
-        .finally(() => { dispatching = undefined; });
-    };
-    tick();
-    dispatchTimer = setInterval(tick, 5000);
-  }
+  const processingStoreId = env.WORKER_STORE_ID;
+  if (!processingStoreId) throw new Error("WORKER_STORE_ID is required for the catalog worker.");
+  geminiPolicyFromEnv(process.env);
+  const storage = createOriginalStorage();
+  if (storage instanceof SupabaseOriginalStorage) await storage.ensurePrivateBucket();
+  const parseQueue = `spreadsheet-${processingStoreId}-v1`;
+  producer = parseProducer(env.REDIS_URL, parseQueue);
+  consumer = parseConsumer(env.REDIS_URL, processingStoreId, storage, parseQueue);
+  catalogDispatch = catalogProducer(env.REDIS_URL, processingStoreId);
+  catalogWorker = catalogConsumer(env.REDIS_URL, processingStoreId);
+  await Promise.all([consumer.worker.waitUntilReady(), catalogWorker.worker.waitUntilReady()]);
+  const tick = () => {
+    if (dispatching || shuttingDown) return;
+    dispatching = Promise.allSettled([dispatchPending(producer!.queue, processingStoreId), dispatchCatalog(catalogDispatch!.queue, processingStoreId)]).then(results => { if (results.some(result => result.status === "rejected")) throw new Error("Dispatch temporarily unavailable"); })
+      .catch(() => console.error("Worker dispatch is temporarily unavailable; durable work is retained."))
+      .finally(() => { dispatching = undefined; });
+  };
+  tick();
+  dispatchTimer = setInterval(tick, 5000);
   if (!shuttingDown) {
     server = Bun.serve({
-      hostname: "127.0.0.1",
-      port: env.WORKER_HEALTH_PORT,
+      hostname: "0.0.0.0",
+      port: Number(process.env.PORT ?? env.WORKER_HEALTH_PORT),
       async fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === "/health") return Response.json({ status: "ok" });
@@ -93,8 +92,8 @@ try {
         return new Response("Not found", { status: 404 });
       }
     });
-    console.info(`Worker ready: PostgreSQL and Redis connected. Health port ${env.WORKER_HEALTH_PORT}.`);
-    console.info(consumer ? "Local spreadsheet ingestion enabled. Import completion means parsing only." : "Connectivity mode: local ingestion is disabled.");
+    console.info(`Worker ready: PostgreSQL and Redis connected. Health port ${process.env.PORT ?? env.WORKER_HEALTH_PORT}.`);
+    console.info("Configured store pipeline enabled. Import completion means parsing only.");
   }
 } catch {
   console.error("Worker startup failed. Check configuration, PostgreSQL, Redis, and the health port.");

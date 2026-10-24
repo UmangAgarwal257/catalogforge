@@ -2,6 +2,9 @@
   "name": "@catalogforge/worker",
   "private": true,
   "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts"
+  },
   "dependencies": {
     "@catalogforge/db": "workspace:*",
     "@catalogforge/shared": "workspace:*",

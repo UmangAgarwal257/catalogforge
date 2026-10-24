@@ -15,11 +15,14 @@
   "dependencies": {
     "@catalogforge/db": "workspace:*",
     "@catalogforge/shared": "workspace:*",
+    "@supabase/supabase-js": "2.118.0",
     "bullmq": "6.4.0",
+    "exceljs": "^4.4.0",
     "ioredis": "^5.8.0",
     "papaparse": "^5.5.3",
-    "exceljs": "^4.4.0",
     "zod": "^4.0.0"
   },
-  "devDependencies": { "@types/papaparse": "^5.3.16" }
+  "devDependencies": {
+    "@types/papaparse": "^5.3.16"
+  }
 }

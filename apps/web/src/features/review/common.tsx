@@ -3,6 +3,8 @@ import Link from "next/link";
 import {usePathname} from "next/navigation";
 import { useEffect,useState } from "react";
 import { z } from "zod";
+import { ThemeToggle } from "./theme-toggle";
+import { SignOut } from "../auth/sign-out";
 export const control="min-h-11 w-full rounded-lg border bg-background px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60";
 export const panel="rounded-xl border bg-background p-5 shadow-sm";
 const navItems = [
@@ -16,7 +18,7 @@ const navItems = [
 export function CatalogNav() {
  const pathname=usePathname();
  return <aside className="lg:sticky lg:top-6 lg:self-start">
-   <div className="flex items-center justify-between gap-3 border-b pb-4 lg:border-0 lg:pb-5"><Link href="/dashboard" className="font-semibold tracking-tight">CatalogForge</Link><span className="rounded-full border px-2 py-1 text-[11px] font-medium text-muted-foreground">LOCAL</span></div>
+   <div className="flex items-center justify-between gap-3 border-b pb-4 lg:border-0 lg:pb-5"><Link href="/dashboard" className="font-semibold tracking-tight">CatalogForge</Link><div className="flex items-center gap-2"><SignOut/><ThemeToggle /></div></div>
    <nav aria-label="Catalog navigation" className="grid grid-cols-2 gap-1 border-b py-3 sm:grid-cols-3 lg:grid-cols-1 lg:border-0 lg:py-0">
     {navItems.map(([href, label]) => <Link key={href} href={href} aria-current={(href==="/"?pathname==="/":pathname.startsWith(href))?"page":undefined} className={`flex min-h-11 items-center rounded-md px-3 py-2 text-sm font-medium underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring ${ (href==="/"?pathname==="/":pathname.startsWith(href))?"bg-primary text-primary-foreground":"text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{label}</Link>)}
    </nav>

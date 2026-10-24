@@ -5,18 +5,20 @@
   "scripts": {
     "dev": "bun --env-file=../../.env run next dev --hostname 127.0.0.1",
     "build": "bun --env-file=../../.env run next build",
-    "start": "bun --env-file=../../.env run next start --hostname 127.0.0.1"
+    "start": "bun --env-file=../../.env run next start --hostname 0.0.0.0"
   },
   "dependencies": {
     "@catalogforge/db": "workspace:*",
+    "@catalogforge/ingestion": "workspace:*",
+    "@catalogforge/review": "workspace:*",
     "@catalogforge/shared": "workspace:*",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.118.0",
+    "clsx": "^2.1.1",
     "next": "16.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^3.0.0",
-    "@catalogforge/ingestion": "workspace:*",
-    "@catalogforge/review": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

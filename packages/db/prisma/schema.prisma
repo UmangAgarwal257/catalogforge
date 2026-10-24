@@ -22,6 +22,13 @@ enum ImportStatus {
   FAILED
 }
 
+enum StoreMemberRole {
+  OWNER
+  MANAGER
+  EDITOR
+  VIEWER
+}
+
 enum SourceRowStatus {
   PENDING
   PROCESSING
@@ -63,6 +70,19 @@ model Store {
   imports   Import[]
   products  Product[]
   mediaAssets MediaAsset[]
+  members StoreMember[]
+}
+
+model StoreMember {
+  id          String         @id @default(uuid()) @db.Uuid
+  storeId     String         @db.Uuid
+  authUserId  String         @db.Uuid
+  role        StoreMemberRole @default(EDITOR)
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  store       Store          @relation(fields: [storeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([storeId, authUserId])
+  @@index([authUserId])
 }
 
 model Supplier {

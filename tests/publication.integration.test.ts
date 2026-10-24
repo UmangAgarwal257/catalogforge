@@ -28,9 +28,8 @@ async function ingest(profile=0, price="12,50") {
  const rows=[["000123", "FAMILY-MUG", "Ceramic mug", "<p>Hand wash only. Not microwave safe.</p>", profile?"12.50":price,profile?"GBP":"EUR",profile?"250":"0,25","350 ml","Blue","Ceramic"],
  ["000124","FAMILY-MUG","Ceramic mug","<p>Hand wash only. Not microwave safe.</p>",profile?"15.00":"15,00",profile?"GBP":"EUR",profile?"300":"0,30","450 ml","Blue","Ceramic"]];
  let bytes:Uint8Array;if(profile){const book=new ExcelJS.Workbook();const sheet=book.addWorksheet("Goods");sheet.addRow(headers);rows.forEach(r=>sheet.addRow(r));bytes=new Uint8Array(await book.xlsx.writeBuffer());}else bytes=Buffer.from([headers,...rows].map(r=>r.join(";")).join("\n"));
- vi.stubEnv("NODE_ENV","development");vi.stubEnv("DEV_INGESTION_ENABLED","true");vi.stubEnv("DEV_STORE_ID",storeId);vi.stubEnv("LOCAL_UPLOAD_DIR",directory);
  const form=new FormData();form.set("supplierId",supplierId);form.set("idempotencyKey",crypto.randomUUID());form.set("profileId",SUPPLIER_PROFILES[profile]!.id);form.set("file",new File([new Uint8Array(bytes)],profile?"goods.xlsx":"goods.csv"));
- const response=await importEndpoint(new Request("http://localhost/api/imports",{method:"POST",body:form}));expect(response.status).toBe(202);const {importId}=await response.json() as {importId:string};vi.stubEnv("NODE_ENV","test");
+ const response=await importEndpoint(new Request("https://catalog.example/api/imports",{method:"POST",body:form}),undefined,"imports",storeId,new LocalOriginalStorage(directory));expect(response.status).toBe(202);const {importId}=await response.json() as {importId:string};vi.stubEnv("NODE_ENV","test");
  await processParseImport(importId,storeId,new LocalOriginalStorage(directory));await processCatalogTask(storeId,importId,{provider:testProvider,policy:testPolicy});
  return db.productRevision.findFirstOrThrow({where:{storeId,originImportId:importId}});
 }
@@ -73,10 +72,10 @@ it("serializes concurrent publishes and rejects changed request IDs without dupl
  const results=await Promise.all([publishRevision(storeId,r.id,input),publishRevision(storeId,r.id,input)]);expect(results.map(x=>x.publication.id)).toEqual([results[0]!.publication.id,results[0]!.publication.id]);expect(await db.productPublication.count({where:{storeId}})).toBe(1);
  await expect(publishRevision(storeId,r.id,{...input,expectedEditVersion:99})).rejects.toMatchObject({status:409});
 });
-it("keeps publication and exports restricted to same-origin local development",async()=>{
- const r=await ingest();vi.stubEnv("NODE_ENV","development");const a=await approve(r.id);const req=(origin:string)=>new Request(`http://localhost/api/product-revisions/${r.id}/publish`,{method:"POST",headers:{"content-type":"application/json",origin},body:JSON.stringify(body(a.revision.editVersion))});
- expect((await reviewEndpoint(req("https://other.example"),r.id,"publish")).status).toBe(403);expect((await reviewEndpoint(req("http://localhost"),r.id,"publish")).status).toBe(200);
- vi.stubEnv("NODE_ENV","production");expect((await reviewEndpoint(req("http://localhost"),r.id,"publish")).status).toBe(404);expect((await exportEndpoint(new Request("http://localhost/api/catalog/export?format=json"))).status).toBe(404);
+it("requires a server-derived store scope for publication and export handlers",async()=>{
+ const r=await ingest();const a=await approve(r.id);const req=()=>new Request(`https://catalog.example/api/product-revisions/${r.id}/publish`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body(a.revision.editVersion))});
+ expect((await reviewEndpoint(req(),r.id,"publish")).status).toBe(401);expect((await reviewEndpoint(req(),r.id,"publish",storeId)).status).toBe(200);
+ expect((await exportEndpoint(new Request("https://catalog.example/api/catalog/export?format=json"))).status).toBe(401);expect((await exportEndpoint(new Request("https://catalog.example/api/catalog/export?format=json"),storeId)).status).toBe(200);
 });
 
 it("prevents moving evidence out of a published revision and modifying its cleaning provenance",async()=>{
@@ -102,7 +101,7 @@ it("streams bounded export snapshots and rejects unsupported Shopify options bef
  // The two variants still need distinct combinations to pass publication.
  const v=await db.variantRevision.findFirstOrThrow({where:{productRevisionId:r.id}});await db.variantRevision.update({where:{productRevisionId_variantId:{productRevisionId:r.id,variantId:v.variantId}},data:{options:{one:"5",two:"2",three:"3",four:"4"}}});await publishRevision(storeId,r.id,body(a.revision.editVersion));
  await expect(captureExport(storeId,"shopify")).rejects.toMatchObject({status:422,code:"SHOPIFY_OPTIONS"});expect(JSON.parse(await exported("json"))[0].variants).toHaveLength(2);
- vi.stubEnv("NODE_ENV","development");const res=await exportEndpoint(new Request("http://localhost/api/catalog/export?format=csv"));expect(res.status).toBe(200);expect(res.headers.get("cache-control")).toBe("no-store");expect(res.headers.get("content-disposition")).toContain("attachment");expect(Papa.parse(await res.text(),{header:true,skipEmptyLines:true}).data).toHaveLength(2);
+ const res=await exportEndpoint(new Request("https://catalog.example/api/catalog/export?format=csv"),storeId);expect(res.status).toBe(200);expect(res.headers.get("cache-control")).toBe("no-store");expect(res.headers.get("content-disposition")).toContain("attachment");expect(Papa.parse(await res.text(),{header:true,skipEmptyLines:true}).data).toHaveLength(2);
 });
 
 it("rejects publication when linked source ingestion is no longer complete",async()=>{

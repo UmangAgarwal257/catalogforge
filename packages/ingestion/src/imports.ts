@@ -13,7 +13,7 @@ export async function registerImport(storage: OriginalStorage, input: {
   validateFile(input.bytes, input.filename);
   const db = getDb();
   if (!await db.supplier.findFirst({ where: { id: fields.data.supplierId, storeId: input.storeId } })) {
-    throw new IngestionError("SUPPLIER_NOT_FOUND", "Supplier does not belong to the configured development store.", 404);
+    throw new IngestionError("SUPPLIER_NOT_FOUND", "Supplier does not belong to the authenticated store.", 404);
   }
   const profile=input.profileId?getSupplierProfile(input.profileId):undefined;
   if(input.profileId&&!profile)throw new IngestionError("INVALID_PROFILE","Choose a supported supplier mapping profile.",400);
@@ -78,7 +78,7 @@ export async function importDetails(storeId: string, id: string, page: number, p
   const db = getDb();
   const result=await db.$transaction(async (tx) => {
     const imported = await tx.import.findFirst({ where: { id, storeId }, select: summarySelect });
-    if (!imported) throw new IngestionError("IMPORT_NOT_FOUND", "Import was not found in this development store.", 404);
+    if (!imported) throw new IngestionError("IMPORT_NOT_FOUND", "Import was not found in this store.", 404);
     const rows = await tx.sourceRow.findMany({ where: { importId: id, storeId },
       orderBy: [{ sheetIndex: "asc" }, { rowNumber: "asc" }], skip: (page - 1) * pageSize, take: pageSize });
     return { imported, rows, page, pageSize };

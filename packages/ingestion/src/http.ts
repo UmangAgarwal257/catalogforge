@@ -1,32 +1,7 @@
 import { z } from "zod";
-import { IngestionError, LIMITS, localSettingsSchema } from "./contracts";
-import { LocalOriginalStorage } from "./storage";
+import { IngestionError, LIMITS } from "./contracts";
+import { createOriginalStorage, type OriginalStorage } from "./storage";
 import { importDetails, listImports, listSuppliers, registerImport } from "./imports";
-
-export function developmentConfig() {
-  if (process.env.NODE_ENV !== "development" || process.env.DEV_INGESTION_ENABLED !== "true" || process.env.VERCEL) {
-    throw new IngestionError("DEVELOPMENT_ONLY", "Spreadsheet APIs are disabled outside explicitly enabled local development.", 404);
-  }
-  const parsed = localSettingsSchema.safeParse(process.env);
-  if (!parsed.success) throw new IngestionError("DEVELOPMENT_CONFIG", "Set DEV_STORE_ID and an absolute LOCAL_UPLOAD_DIR for local ingestion.", 503);
-  return parsed.data;
-}
-
-export function checkBrowserOrigin(request: Request): void {
-  const target = new URL(request.url);
-  const loopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
-  // Next.js may canonicalize Request.url to localhost even when the browser used
-  // 127.0.0.1. Compare Origin with the actual, independently validated HTTP host.
-  let browserTarget: URL;
-  try { browserTarget = new URL(`${target.protocol}//${request.headers.get("host") ?? target.host}`); }
-  catch { throw new IngestionError("LOCAL_ONLY", "Use the local development server on localhost.", 403); }
-  if (!loopback(target.hostname) || !loopback(browserTarget.hostname) || browserTarget.port !== target.port || browserTarget.username || browserTarget.password) {
-    throw new IngestionError("LOCAL_ONLY", "Use the local development server on localhost.", 403);
-  }
-  const origin = request.headers.get("origin");
-  if (origin && origin !== browserTarget.origin) throw new IngestionError("CROSS_ORIGIN", "Cross-origin access to the local import API is not allowed.", 403);
-  if (request.headers.get("sec-fetch-site") === "cross-site") throw new IngestionError("CROSS_ORIGIN", "Cross-site import requests are not allowed.", 403);
-}
 
 function pageArguments(request: Request) {
   const params = new URL(request.url).searchParams;
@@ -58,10 +33,10 @@ async function boundedFormData(request: Request): Promise<FormData> {
   } catch { throw new IngestionError("INVALID_MULTIPART", "Upload form-data could not be read.", 400); }
 }
 
-export async function importEndpoint(request: Request, id?: string, resource: "imports" | "suppliers" = "imports"): Promise<Response> {
+export async function importEndpoint(request: Request, id?: string, resource: "imports" | "suppliers" = "imports", scopedStoreId?: string, storageOverride?: OriginalStorage): Promise<Response> {
   try {
-    const config = developmentConfig();
-    checkBrowserOrigin(request);
+    if (!scopedStoreId) throw new IngestionError("STORE_SCOPE_REQUIRED", "Authenticated store scope is required.", 401);
+    const storeId = scopedStoreId;
     const { page, pageSize } = pageArguments(request);
     if (resource === "suppliers") {
       if(request.method==="POST"){
@@ -74,20 +49,20 @@ export async function importEndpoint(request: Request, id?: string, resource: "i
         const body=z.object({name:z.string().trim().min(1).max(150),requestId:z.uuid()}).strict().safeParse(value);
         if(!body.success)throw new IngestionError("INVALID_FIELDS","Enter a supplier name (1–150 characters) and request ID.",400);
         const {getDb}=await import("@catalogforge/db");const db=getDb();
-        await db.supplier.createMany({data:[{id:body.data.requestId,storeId:config.DEV_STORE_ID,name:body.data.name}],skipDuplicates:true});
-        const item=await db.supplier.findFirst({where:{id:body.data.requestId,storeId:config.DEV_STORE_ID,name:body.data.name},select:{id:true,name:true}});
+        await db.supplier.createMany({data:[{id:body.data.requestId,storeId,name:body.data.name}],skipDuplicates:true});
+        const item=await db.supplier.findFirst({where:{id:body.data.requestId,storeId,name:body.data.name},select:{id:true,name:true}});
         if(!item)throw new IngestionError("IDEMPOTENCY_CONFLICT","Supplier request ID already used.",409);
         return Response.json(item,{headers:{"Cache-Control":"no-store"}});
       }
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
-      return Response.json({ ...await listSuppliers(config.DEV_STORE_ID, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ ...await listSuppliers(storeId, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
     }
     if (request.method === "GET") {
       if (id) {
         if (!z.uuid().safeParse(id).success) throw new IngestionError("INVALID_ID", "Import ID must be a UUID.", 400);
-        return Response.json(await importDetails(config.DEV_STORE_ID, id, page, pageSize), { headers: { "Cache-Control": "no-store" } });
+        return Response.json(await importDetails(storeId, id, page, pageSize), { headers: { "Cache-Control": "no-store" } });
       }
-      return Response.json({ ...await listImports(config.DEV_STORE_ID, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ ...await listImports(storeId, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
     }
     const form = await boundedFormData(request);
     const uploads = form.getAll("file");
@@ -96,8 +71,8 @@ export async function importEndpoint(request: Request, id?: string, resource: "i
       throw new IngestionError("INVALID_FIELDS", "Provide exactly one file, supplierId, and idempotencyKey.", 400);
     }
     if (file.size > LIMITS.fileBytes) throw new IngestionError("FILE_TOO_LARGE", "Spreadsheet exceeds 10 MiB.", 413);
-    const result = await registerImport(new LocalOriginalStorage(config.LOCAL_UPLOAD_DIR), {
-      storeId: config.DEV_STORE_ID, supplierId: String(form.get("supplierId") ?? ""),
+    const result = await registerImport(storageOverride ?? createOriginalStorage(), {
+      storeId, supplierId: String(form.get("supplierId") ?? ""),
       idempotencyKey: String(form.get("idempotencyKey") ?? ""), filename: file.name, bytes: new Uint8Array(await file.arrayBuffer()), profileId: form.get("profileId")?String(form.get("profileId")):undefined
     });
     return Response.json({ importId: result.imported.id, status: result.imported.status, reused: result.reused }, { status: result.reused ? 200 : 202, headers: { "Cache-Control": "no-store" } });

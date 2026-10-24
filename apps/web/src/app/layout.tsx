@@ -10,5 +10,5 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   getWebEnv();
-  return <html lang="en"><body>{children}</body></html>;
+  return <html lang="en" className="dark" suppressHydrationWarning><body>{children}</body></html>;
 }

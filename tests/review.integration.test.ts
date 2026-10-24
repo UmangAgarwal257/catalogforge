@@ -111,17 +111,15 @@ it("enforces event relational scope and version uniqueness in PostgreSQL",async(
  await expect(db.productReviewEvent.create({data:{...event,changes:{},decisions:[],id:crypto.randomUUID(),requestId:crypto.randomUUID()}})).rejects.toThrow();
  await expect(db.productReviewEvent.create({data:{...event,changes:{},decisions:[],id:crypto.randomUUID(),storeId:crypto.randomUUID(),afterVersion:3,beforeVersion:2,requestId:crypto.randomUUID()}})).rejects.toThrow();
 });
-it("keeps HTTP reads/writes development-only and rejects cross-origin/store and invalid limits",async()=>{
+it("requires explicit server-derived scope for review reads and writes",async()=>{
  const old={...process.env};
  try{
-  process.env.NODE_ENV="production";expect((await reviewEndpoint(new Request("http://localhost:3000/api/product-revisions"))).status).toBe(404);
-  process.env.NODE_ENV="development";process.env.DEV_INGESTION_ENABLED="true";process.env.DEV_STORE_ID=f.storeId;process.env.LOCAL_UPLOAD_DIR="/tmp/catalogforge-review-test";
-  expect((await reviewEndpoint(new Request("http://localhost:3000/api/product-revisions",{headers:{origin:"https://evil.example"}}))).status).toBe(403);
-  expect((await reviewEndpoint(new Request("http://localhost:3000/api/product-revisions?pageSize=1000"))).status).toBe(422);
-  expect((await reviewEndpoint(new Request("http://localhost:3000/api/product-revisions"))).status).toBe(200);
+  expect((await reviewEndpoint(new Request("https://catalog.example/api/product-revisions"))).status).toBe(401);
+  expect((await reviewEndpoint(new Request("https://catalog.example/api/product-revisions?pageSize=1000"),undefined,undefined,f.storeId)).status).toBe(422);
+  expect((await reviewEndpoint(new Request("https://catalog.example/api/product-revisions"),undefined,undefined,f.storeId)).status).toBe(200);
   const patch=()=>new Request(`http://localhost:3000/api/product-revisions/${f.revisionId}`,{method:"PATCH",headers:{"content-type":"application/json",origin:"http://localhost:3000"},body:JSON.stringify(body(1,{fields:{title:"Via HTTP"}}))});
-  expect((await reviewEndpoint(patch(),f.revisionId)).status).toBe(200);
-  process.env.DEV_STORE_ID=crypto.randomUUID();expect((await reviewEndpoint(patch(),f.revisionId)).status).toBe(404);
+  expect((await reviewEndpoint(patch(),f.revisionId,undefined,f.storeId)).status).toBe(200);
+  expect((await reviewEndpoint(patch(),f.revisionId,undefined,crypto.randomUUID())).status).toBe(404);
  }finally{process.env=old;}
 });
 

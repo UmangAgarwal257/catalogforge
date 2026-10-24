@@ -3,10 +3,7 @@
 import { useEffect, useState } from "react";
 
 export const publicErrors: Record<string, string> = {
-  DEVELOPMENT_ONLY: "Imports are available only in explicitly enabled local development.",
-  DEVELOPMENT_CONFIG: "Local ingestion is not configured. Follow the development setup instructions.",
-  LOCAL_ONLY: "Open the dashboard directly on localhost. Remote access is disabled.",
-  CROSS_ORIGIN: "Open the dashboard directly on its local address. Cross-origin requests are disabled.",
+  STORE_SCOPE_REQUIRED: "Sign in to an account assigned to a store before importing.",
   FILE_TOO_LARGE: "Choose a spreadsheet no larger than 10 MiB.",
   UNSUPPORTED_FILE: "Choose a CSV or XLSX spreadsheet.", EMPTY_FILE: "Choose a file that is not empty.",
   INVALID_XLSX: "This XLSX file could not be read. Save a new, unencrypted workbook and try again.",
@@ -17,12 +14,12 @@ export const publicErrors: Record<string, string> = {
   ROW_LIMIT: "The spreadsheet exceeds 10,000 accepted records. Split it into smaller files.",
   EMPTY_SHEET: "No header record was found. Add column headers and try a new import.",
   IDEMPOTENCY_CONFLICT: "This upload key already identifies different content. Intentionally start a new import to continue.",
-  SUPPLIER_NOT_FOUND: "This supplier is unavailable in the development store. Refresh the supplier list.",
-  DISPATCH_UNAVAILABLE: "Waiting for the local queue. Make sure Redis and the worker are running; dispatch will retry.",
+  SUPPLIER_NOT_FOUND: "This supplier is unavailable in your store. Refresh the supplier list.",
+  DISPATCH_UNAVAILABLE: "The import queue is temporarily unavailable. Dispatch will retry; refresh this import shortly.",
   PARSE_RETRY_PENDING: "Parsing was interrupted. The worker is waiting to retry safely.",
-  PARSE_RETRIES_EXHAUSTED: "Parsing exhausted its retries. Check the worker and local services before starting another import.",
+  PARSE_RETRIES_EXHAUSTED: "Parsing exhausted its retries. Check service health before starting another import.",
   SOURCE_MISMATCH: "Existing source evidence did not match. Original rows were retained; inspect the import before reimporting.",
-  FILE_HASH_MISMATCH: "The preserved file did not match its original hash. Inspect local storage before reimporting."
+  FILE_HASH_MISMATCH: "The preserved file did not match its original hash. Contact your administrator before reimporting."
 };
 
 export async function readResponse<T>(response: Response, schema: { parse(value: unknown): T }): Promise<T> {
