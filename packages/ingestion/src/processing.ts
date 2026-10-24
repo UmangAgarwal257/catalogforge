@@ -90,6 +90,7 @@ export async function processParseImport(id: string, storeId: string, storage: O
         throw new IngestionError("ROW_COUNT_MISMATCH", "Persisted source rows do not match the validated record count.");
       }
       await tx.import.update({ where: { id }, data: { status: "COMPLETED", finishedAt: new Date(), parseRunId: null, errorCode: null, errorMessage: null } });
+      if (imported.mappingConfig && typeof imported.mappingConfig === "object" && "profile" in imported.mappingConfig) await tx.catalogTask.createMany({ data: [{ importId: id, storeId }], skipDuplicates: true });
     });
   } catch (error) {
     if (error instanceof Superseded) return;

@@ -53,3 +53,14 @@ it("browses the queue with bounded page sizes, search and page navigation",async
  await waitFor(()=>expect(mock.mock.calls.some(([url])=>url.includes("page=2&pageSize=10"))).toBe(true));
  await user.type(screen.getByLabelText("Search title or SKU"),"tc-pl");await waitFor(()=>expect(mock.mock.calls.some(([url])=>url.includes("search=tc-pl"))).toBe(true));
 });
+
+it("saves 101+ variants as bounded pages and prevents losing unsaved edits during navigation",async()=>{
+ detail.revision.variants=Array.from({length:101},(_,i)=>({...detail.revision.variants[0]!,variantId:`00000000-0000-4000-8000-${String(i+10).padStart(12,"0")}`,options:{size:String(i)},variant:{sku:`SKU-${i}`}}));
+ const base=mock.getMockImplementation()!;mock.mockImplementation(async(url,init)=>{if(init?.method==="PATCH"){const body=JSON.parse(String(init.body));for(const patch of body.variants){const v=detail.revision.variants.find(v=>v.variantId===patch.variantId)!;Object.assign(v,patch);}}return base(url,init);});
+ render(<ReviewEditor productId={productId} revisionId={revisionId}/>);const user=userEvent.setup();await screen.findByLabelText("Price for SKU-0");await user.type(screen.getByLabelText("Price for SKU-0"),"12.50");
+ await user.click(screen.getAllByRole("button",{name:"Next"})[0]!);expect(await screen.findByText(/Save this page before changing variant pages/)).toBeTruthy();expect(screen.queryByLabelText("Price for SKU-10")).toBeNull();
+ await user.click(screen.getByRole("button",{name:"Save changes"}));await screen.findByText("Changes saved. Approval blockers have been refreshed.");
+ for(let i=0;i<10;i++)await user.click(screen.getAllByRole("button",{name:"Next"})[0]!);
+ await screen.findByLabelText("Price for SKU-100");await user.type(screen.getByLabelText("Price for SKU-100"),"19.99");await user.click(screen.getByRole("button",{name:"Save changes"}));await waitFor(()=>expect(mock.mock.calls.filter(([,i])=>i?.method==="PATCH")).toHaveLength(2));
+ const bodies=mock.mock.calls.filter(([,i])=>i?.method==="PATCH").map(([,i])=>JSON.parse(String(i?.body)));expect(bodies.map(b=>b.variants.length)).toEqual([1,1]);expect(bodies.map(b=>b.expectedEditVersion)).toEqual([1,2]);expect(bodies.map(b=>b.variants[0].priceMinor)).toEqual(["1250","1999"]);
+});

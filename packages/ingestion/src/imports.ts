@@ -1,9 +1,11 @@
+import { getSupplierProfile,TAXONOMY,catalogConfigJson } from "@catalogforge/shared/catalog";
+import { catalogStatus } from "./catalog-status";
 import { getDb } from "@catalogforge/db";
 import { PARSER_VERSION, IngestionError, uploadFieldsSchema, validateFile } from "./contracts";
 import { sha256, type OriginalStorage } from "./storage";
 
 export async function registerImport(storage: OriginalStorage, input: {
-  storeId: string; supplierId: string; idempotencyKey: string; filename: string; bytes: Uint8Array;
+  storeId: string; supplierId: string; idempotencyKey: string; filename: string; bytes: Uint8Array; profileId?: string;
 }) {
   const fields = uploadFieldsSchema.safeParse(input);
   if (!fields.success) throw new IngestionError("INVALID_FIELDS", "Provide a valid supplier UUID and a request key (1–200 characters).", 400);
@@ -13,11 +15,15 @@ export async function registerImport(storage: OriginalStorage, input: {
   if (!await db.supplier.findFirst({ where: { id: fields.data.supplierId, storeId: input.storeId } })) {
     throw new IngestionError("SUPPLIER_NOT_FOUND", "Supplier does not belong to the configured development store.", 404);
   }
+  const profile=input.profileId?getSupplierProfile(input.profileId):undefined;
+  if(input.profileId&&!profile)throw new IngestionError("INVALID_PROFILE","Choose a supported supplier mapping profile.",400);
+  const configuration=profile?{profile,taxonomy:TAXONOMY}:null;
+  const mappingConfig=configuration?{...configuration,configHash:sha256(Buffer.from(catalogConfigJson(configuration)))}:{};
   const hash = sha256(input.bytes);
   const scope = { storeId: input.storeId, supplierId: fields.data.supplierId, idempotencyKey: fields.data.idempotencyKey };
   const existing = await db.import.findUnique({ where: { storeId_supplierId_idempotencyKey: scope } });
   const compatible = (item: NonNullable<typeof existing>) => {
-    if (item.fileSha256 !== hash || item.originalFilename !== input.filename || item.parserVersion !== PARSER_VERSION) {
+    if (item.fileSha256 !== hash || item.originalFilename !== input.filename || item.parserVersion !== PARSER_VERSION || catalogConfigJson(item.mappingConfig) !== catalogConfigJson(mappingConfig)) {
       throw new IngestionError("IDEMPOTENCY_CONFLICT", "This request key already identifies a different upload. Use a new key for intentional reprocessing.", 409);
     }
     return { imported: item, reused: true };
@@ -28,7 +34,7 @@ export async function registerImport(storage: OriginalStorage, input: {
     const imported = await db.$transaction(async (tx) => {
       const item = await tx.import.create({ data: {
         ...scope, originalFilename: input.filename, storageKey: key,
-        fileSha256: hash, parserVersion: PARSER_VERSION, mappingConfig: {}
+        fileSha256: hash, parserVersion: PARSER_VERSION, mappingConfig
       } });
       await tx.parseDispatch.create({ data: { importId: item.id } });
       return item;
@@ -52,6 +58,7 @@ const summarySelect = {
   id: true, supplierId: true, originalFilename: true, status: true, totalRows: true,
   errorCode: true, errorMessage: true, createdAt: true, startedAt: true, finishedAt: true,
   _count: { select: { sourceRows: true } },
+  catalogTask: { select: { state:true, phase:true, nextAttemptAt:true } },
   supplier: { select: { name: true } }
 } as const;
 
@@ -69,11 +76,12 @@ export async function listSuppliers(storeId: string, page: number, pageSize: num
 
 export async function importDetails(storeId: string, id: string, page: number, pageSize: number) {
   const db = getDb();
-  return db.$transaction(async (tx) => {
+  const result=await db.$transaction(async (tx) => {
     const imported = await tx.import.findFirst({ where: { id, storeId }, select: summarySelect });
     if (!imported) throw new IngestionError("IMPORT_NOT_FOUND", "Import was not found in this development store.", 404);
     const rows = await tx.sourceRow.findMany({ where: { importId: id, storeId },
       orderBy: [{ sheetIndex: "asc" }, { rowNumber: "asc" }], skip: (page - 1) * pageSize, take: pageSize });
     return { imported, rows, page, pageSize };
   }, { isolationLevel: "RepeatableRead" });
+  return {...result,pipeline:await catalogStatus(storeId,id)};
 }

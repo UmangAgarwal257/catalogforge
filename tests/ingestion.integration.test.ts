@@ -232,7 +232,7 @@ describe("local import HTTP contract", () => {
     vi.stubEnv("VERCEL", ""); vi.stubEnv("DEV_INGESTION_ENABLED", "false"); expect((await read()).status).toBe(404);
     vi.stubEnv("DEV_INGESTION_ENABLED", "true"); expect((await read("http://example.com/api/suppliers")).status).toBe(403);
     expect((await read(undefined, { origin: "https://example.com" })).status).toBe(403);
-    expect((await importEndpoint(new Request("http://localhost:3000/api/suppliers", { method: "POST" }), undefined, "suppliers")).status).toBe(405);
+    expect((await importEndpoint(new Request("http://localhost:3000/api/suppliers", { method: "DELETE" }), undefined, "suppliers")).status).toBe(405);
   });
   it("uses the validated browser host when Next.js canonicalizes its request URL", async () => {
     const request = (host: string, origin: string) => new Request("http://localhost:3000/api/suppliers", { headers: { host, origin } });

@@ -2,6 +2,11 @@
   "name": "@catalogforge/shared",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "zod": "^4.0.0" }
+  "exports": {
+    ".": "./src/index.ts",
+    "./catalog": "./src/catalog.ts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
 }

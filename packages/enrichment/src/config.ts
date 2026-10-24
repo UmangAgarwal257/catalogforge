@@ -1,3 +1,4 @@
+import { CATEGORY_KEYS } from "@catalogforge/shared/catalog";
 import { EnrichmentError, policySchema, type Policy } from "./contracts";
 // Explicitly verified free Standard text models; changing this list requires
 // checking Google's current pricing, not merely accepting a model name from env.
@@ -10,5 +11,5 @@ export function geminiPolicyFromEnv(env: NodeJS.ProcessEnv): Policy {
   return policySchema.parse({ provider: "gemini", primary: { model, inputMicroUsdPerMillion: 0, outputMicroUsdPerMillion: 0 }, escalation: null,
     budgetMicroUsd: 0, freeTierBillingDisabled: true, pricingVersion: "gemini-free-standard-2026-10-23",
     requestsPerDay: Number(env.GEMINI_REQUESTS_PER_DAY ?? 5), inputTokensPerMinute: Number(env.GEMINI_INPUT_TOKENS_PER_MINUTE ?? 10000),
-    maxOutputTokens: 1500, maxInputBytes: 24000, confidenceThreshold: 85, categories: ["Home & Garden > Planters"] });
+    maxOutputTokens: 1500, maxInputBytes: 24000, confidenceThreshold: 85, categories: CATEGORY_KEYS });
 }

@@ -1,3 +1,4 @@
+import { catalogProducer, catalogConsumer, dispatchCatalog } from "@catalogforge/pipeline/queue";
 import { Redis } from "ioredis";
 import { disconnectDatabase } from "@catalogforge/db";
 import { env } from "./env";
@@ -20,6 +21,8 @@ let server: ReturnType<typeof Bun.serve> | undefined;
 let shuttingDown = false;
 let producer: ReturnType<typeof parseProducer> | undefined;
 let consumer: ReturnType<typeof parseConsumer> | undefined;
+let catalogDispatch: ReturnType<typeof catalogProducer> | undefined;
+let catalogWorker: ReturnType<typeof catalogConsumer> | undefined;
 let dispatchTimer: ReturnType<typeof setInterval> | undefined;
 let dispatching: Promise<void> | undefined;
 
@@ -32,8 +35,10 @@ async function shutdown(exitCode: number): Promise<void> {
     clearInterval(dispatchTimer);
     await server?.stop(true);
     await dispatching;
-    await consumer?.worker.close();
-    await producer?.queue.close();
+    await Promise.all([consumer?.worker.close(), catalogWorker?.worker.close()]);
+    await Promise.all([producer?.queue.close(), catalogDispatch?.queue.close()]);
+    catalogWorker?.connection.disconnect();
+    catalogDispatch?.connection.disconnect();
     consumer?.connection.disconnect();
     producer?.connection.disconnect();
     redis.disconnect();
@@ -59,13 +64,16 @@ try {
     const config = localSettingsSchema.safeParse(process.env);
     if (!config.success) throw new Error("Set DEV_STORE_ID and an absolute LOCAL_UPLOAD_DIR.");
     const storage = new LocalOriginalStorage(config.data.LOCAL_UPLOAD_DIR);
-    producer = parseProducer(env.REDIS_URL);
-    consumer = parseConsumer(env.REDIS_URL, config.data.DEV_STORE_ID, storage);
-    await consumer.worker.waitUntilReady();
+    const parseQueue = `spreadsheet-${config.data.DEV_STORE_ID}-v1`;
+    producer = parseProducer(env.REDIS_URL, parseQueue);
+    consumer = parseConsumer(env.REDIS_URL, config.data.DEV_STORE_ID, storage, parseQueue);
+    catalogDispatch = catalogProducer(env.REDIS_URL, config.data.DEV_STORE_ID);
+    catalogWorker = catalogConsumer(env.REDIS_URL, config.data.DEV_STORE_ID);
+    await Promise.all([consumer.worker.waitUntilReady(), catalogWorker.worker.waitUntilReady()]);
     const tick = () => {
       if (dispatching || shuttingDown) return;
-      dispatching = dispatchPending(producer!.queue, config.data.DEV_STORE_ID)
-        .catch(() => console.error("Parse dispatch is temporarily unavailable; durable work is retained."))
+      dispatching = Promise.allSettled([dispatchPending(producer!.queue, config.data.DEV_STORE_ID), dispatchCatalog(catalogDispatch!.queue, config.data.DEV_STORE_ID)]).then(results => { if (results.some(result => result.status === "rejected")) throw new Error("Dispatch temporarily unavailable"); })
+        .catch(() => console.error("Worker dispatch is temporarily unavailable; durable work is retained."))
         .finally(() => { dispatching = undefined; });
     };
     tick();
@@ -79,7 +87,7 @@ try {
         const path = new URL(request.url).pathname;
         if (path === "/health") return Response.json({ status: "ok" });
         if (path === "/ready") {
-          const health = await checkReadiness(redis, consumer, shuttingDown);
+          const health = await checkReadiness(redis, consumer && catalogWorker ? {isAvailable: async () => (await Promise.all([consumer!.isAvailable(), catalogWorker!.isAvailable()])).every(Boolean)} : consumer, shuttingDown);
           return Response.json(health, { status: health.status === "ok" ? 200 : 503 });
         }
         return new Response("Not found", { status: 404 });

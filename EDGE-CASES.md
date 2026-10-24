@@ -517,3 +517,45 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **Why:** Audit history is not a permanent blocker list. A human decision for one value must not silently authorize another value or duplicate a completed approval.
 - **Implementation status:** Handled and tested for local single-proposal review — ProductReviewEvent records action/request hash, before/after versions, field changes and decisions. Unique constraints and row locks protect replay/concurrency; integration tests cover rollback, changed-payload conflicts, missing-data repair, cited resolutions, invalidated resolutions, category adoption, published safety and read-only terminal revisions. The real browser completed the Terracotta repair and approval with genuine recorded Gemini evidence. Human citations are not semantic entailment proof; broader review/authentication/publication remains deferred.
 - **Test:** Run review unit/component/integration tests and the retained-fixture browser procedure in development notes. Use a disposable integration database so real project-wide quota history is not erased or confused with mocked provider tests.
+
+### EC-61 — A configured supplier profile does not match uploaded headers
+- **What happens:** A merchant selects the wrong format, columns move, or a required mapped header changes.
+- **Application should do:** Freeze the selected version/configuration hash with the original import, check all accepted records before cleaning, and show Needs mapping without guessing or creating product identities.
+- **Why:** A syntactically valid spreadsheet does not establish correct business-field interpretation.
+- **Implementation status:** Handled and tested for the two configured positional profiles. CSV/XLSX tests and a real browser mismatch preserve evidence and create no cleaning/product results. Canonical hashes survive PostgreSQL JSONB key ordering; import configuration remains immutable. Custom mapping UI and header-only-file mapping validation remain limitations.
+- **Test:** Pipeline integration tests cover both profiles, wrong headers, unsupported profile IDs, upload replay and immutable configuration; inspect the browser's Needs mapping state and preserved coordinates.
+
+### EC-62 — A worker dies between catalog stages or Redis loses dispatch
+- **What happens:** Parsing finishes before downstream dispatch; cleaning/grouping partially completes; generation binds a run before interruption; Redis delivery repeats.
+- **Application should do:** Commit continuation intent with stage completion, reconcile due PostgreSQL tasks, fence expired callers and resume existing cleaning/grouping/enrichment identities.
+- **Why:** A lost Redis job must not lose work, and replay must not create a fresh charge or duplicate evidence.
+- **Implementation status:** Handled and tested within the local pipeline. Atomic parse continuation and grouping manifest updates, leased/fenced catalog tasks, idempotent results and bound AI run IDs are implemented. Isolated tests exercise real Redis socket interruption, duplicate delivery, Bun SIGKILL at cleaning/run-binding checkpoints and exact persisted source preservation. Crash tests advance only their own lease deadline; existing parsing SIGKILL/reconnection tests retain their real queue behavior.
+- **Test:** Run pipeline plus existing ingestion/reconnection integration tests against disposable fixture stores/queues. Check exact row/product/variant/revision/attempt counts and that no grouping rows remain pending at completion. No shared Redis flush or merchant-data reset is used.
+
+### EC-63 — Free-tier capacity is exhausted during an automatic import
+- **What happens:** More grouped products are ready than the configured Gemini quota permits, or the provider returns a retryable 429.
+- **Application should do:** Persist the existing run's retry eligibility, release the worker, show the pause, and redispatch the same run when due without resetting its attempt limit or selecting a paid provider.
+- **Why:** Sleeping jobs and repeated blind calls waste scarce free-tier capacity and obscure actual progress.
+- **Implementation status:** Handled and tested for local scheduling. Automated tests cover provider delay, idle worker release, due-time redispatch and run reuse; existing enrichment tests cover project quota reservations without new attempts. A real two-product XLSX import visibly paused with FREE_TIER_QUOTA and automatically resumed its already-bound second run after eligibility. Missing credentials pause clearly; no application test-stub fallback exists. External project usage remains outside this database's quota accounting.
+- **Test:** Run pipeline/enrichment suites using isolated test responses; separately inspect actual browser retry time, durable run ID, attempt counts and completion using an explicitly billing-disabled Gemini project.
+
+### EC-64 — A 101-variant proposal exceeds one mutation's patch limit
+- **What happens:** A merchant edits variants on more than one editor page, risking an oversized save or lost unsaved edits.
+- **Application should do:** Save bounded pages using optimistic versions and request-ID replay; block page changes while edits are unsaved or uncertain and retain local values.
+- **Why:** Pagination must be a safe editing boundary while the API retains its existing 100-patch and body-size protections.
+- **Implementation status:** Handled and tested for the current ten-variant pages. A component test saves the first/eleventh pages of 101 variants. An actual 101-row browser upload formed one proposal; browser saves on pages eleven and one each sent one variant patch, persisted 1,999/1,350 minor-unit prices with ownership markers, and left publication null. Large text can still exceed the request body limit, which is reported locally.
+- **Test:** Review component tests, existing review API integration tests and the ordinary large-family upload in the browser. Attempt page navigation before saving and verify the warning, then compare PostgreSQL values and edit versions.
+
+### EC-65 — A cited human resolution is mistaken for machine semantic proof
+- **What happens:** An existing source cell is cited for a claim it may not support, or a non-English restriction is changed.
+- **Application should do:** Label human attestation separately from automatically matched facts, configured transformations and unverified AI suggestions. Require explicit merchant review when source descriptions change; do not claim general semantic validation.
+- **Why:** Cell existence and model confidence do not prove entailment or preserve every language's meaning.
+- **Implementation status:** Partially handled and tested. Evidence labels distinguish these origins; conservative description-change detection requires cited human attestation independent of English keywords, with an integration assertion using German qualifications. Existing narrow English restriction checks remain. General multilingual semantic support verification is not implemented, and a human can still make an incorrect attestation.
+- **Test:** Review integration tests and inspect original cells, cleaning transformations, accepted/withheld fields and human-attested decisions in the actual review editor.
+
+### EC-66 — Some rows never form products, or a large proposal cannot be enriched
+- **What happens:** Family identity is missing/ambiguous, prices conflict, or a product exceeds the existing AI evidence/context limit.
+- **Application should do:** Retain durable per-row grouping outcomes, withhold unresolved values, surface coordinate-backed exceptions and generation blockers, and leave review proposals accessible without publishing.
+- **Why:** A green parsing status must not hide lost rows, invented prices or skipped enrichment.
+- **Implementation status:** Handled and tested for current conservative grouping and scheduling. Tests cover missing-family exceptions, conflicting prices remaining null, duplicates and row counts. The real 101-variant upload preserved 101 rows/cleaning results/grouping outcomes and one proposal; AI was blocked at the 100-source-link limit without a request. Import COMPLETED still means parsing only; catalog completion includes explicit blocked/failed outcomes.
+- **Test:** Pipeline integration counts and browser stage counters; compare physical coordinates and revision evidence. Full 10,000-row catalog throughput and arbitrary supplier formats are not established by these tests.

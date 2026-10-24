@@ -45,6 +45,8 @@ export function reviewIssues(data: ReviewSnapshot): ReviewIssue[] {
     add(item.code, typeof item.field === "string" ? item.field : "product", `Review source issue: ${item.code}.`, "FACT", item, true);
   }
   for (const link of data.sources) {
+    const original = (link.cleaningResult?.normalized as {descriptionHtml?:string|null}|undefined)?.descriptionHtml;
+    if(original && !plain(r.descriptionHtml??"").includes(plain(original))) add("SOURCE_DESCRIPTION_CHANGED", "descriptionHtml", "The source description changed. A merchant must attest that qualifications and restrictions in every language remain supported; cell citations alone do not establish semantic correctness.", "FACT", {sourceRowId:link.sourceRowId,original:plain(original)}, true);
     for (const issue of (link.cleaningResult?.issues ?? []) as { code: string; severity: string; field: string; message: string }[]) {
       if (issue.severity === "WARNING" || informative.has(issue.code) || ["PRICE_MISSING", "CURRENCY_MISSING", "REQUIRED_FIELD_MISSING", "MISSING_REQUIRED"].includes(issue.code) && ["priceMinor", "price", "currency", "title", "weightGrams"].includes(issue.field)) continue;
       add(issue.code, issue.field === "description" ? "descriptionHtml" : issue.field, issue.message, "FACT", { issue, sourceRowId: link.sourceRowId }, true);

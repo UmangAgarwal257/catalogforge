@@ -1,0 +1,101 @@
+{
+  "version": "catalog-taxonomy-v1",
+  "categories": [
+    {
+      "key": "Home & Garden > Planters",
+      "label": "Home & Garden > Planters"
+    },
+    {
+      "key": "Home & Garden > Garden Accessories",
+      "label": "Home & Garden > Garden Accessories"
+    },
+    {
+      "key": "Home & Garden > Home Accessories",
+      "label": "Home & Garden > Home Accessories"
+    },
+    {
+      "key": "Home & Garden > Lighting",
+      "label": "Home & Garden > Lighting"
+    },
+    {
+      "key": "Home & Garden > Furniture",
+      "label": "Home & Garden > Furniture"
+    },
+    {
+      "key": "Kitchen & Dining > Cookware",
+      "label": "Kitchen & Dining > Cookware"
+    },
+    {
+      "key": "Kitchen & Dining > Tableware",
+      "label": "Kitchen & Dining > Tableware"
+    },
+    {
+      "key": "Kitchen & Dining > Drinkware",
+      "label": "Kitchen & Dining > Drinkware"
+    },
+    {
+      "key": "Apparel & Accessories > Tops",
+      "label": "Apparel & Accessories > Tops"
+    },
+    {
+      "key": "Apparel & Accessories > Trousers",
+      "label": "Apparel & Accessories > Trousers"
+    },
+    {
+      "key": "Apparel & Accessories > Footwear",
+      "label": "Apparel & Accessories > Footwear"
+    },
+    {
+      "key": "Apparel & Accessories > Bags",
+      "label": "Apparel & Accessories > Bags"
+    },
+    {
+      "key": "Electronics > Cables & Adapters",
+      "label": "Electronics > Cables & Adapters"
+    },
+    {
+      "key": "Electronics > Chargers",
+      "label": "Electronics > Chargers"
+    },
+    {
+      "key": "Electronics > Computer Accessories",
+      "label": "Electronics > Computer Accessories"
+    },
+    {
+      "key": "Electronics > Phone Accessories",
+      "label": "Electronics > Phone Accessories"
+    },
+    {
+      "key": "Beauty & Personal Care > Skin Care",
+      "label": "Beauty & Personal Care > Skin Care"
+    },
+    {
+      "key": "Beauty & Personal Care > Hair Care",
+      "label": "Beauty & Personal Care > Hair Care"
+    },
+    {
+      "key": "Sports & Outdoors > Fitness Accessories",
+      "label": "Sports & Outdoors > Fitness Accessories"
+    },
+    {
+      "key": "Sports & Outdoors > Camping",
+      "label": "Sports & Outdoors > Camping"
+    },
+    {
+      "key": "Pet Supplies > Feeding",
+      "label": "Pet Supplies > Feeding"
+    },
+    {
+      "key": "Pet Supplies > Toys",
+      "label": "Pet Supplies > Toys"
+    },
+    {
+      "key": "Office Supplies > Stationery",
+      "label": "Office Supplies > Stationery"
+    },
+    {
+      "key": "Toys & Games > Games",
+      "label": "Toys & Games > Games"
+    }
+  ]
+}

@@ -10,7 +10,9 @@
         "@catalogforge/enrichment": "workspace:*",
         "@catalogforge/grouping": "workspace:*",
         "@catalogforge/ingestion": "workspace:*",
+        "@catalogforge/pipeline": "workspace:*",
         "@catalogforge/review": "workspace:*",
+        "@catalogforge/shared": "workspace:*",
         "@testing-library/react": "^16.3.3",
         "@testing-library/user-event": "^14.6.8",
         "@types/bun": "1.3.12",
@@ -56,6 +58,7 @@
         "@catalogforge/db": "workspace:*",
         "@catalogforge/enrichment": "workspace:*",
         "@catalogforge/ingestion": "workspace:*",
+        "@catalogforge/pipeline": "workspace:*",
         "@catalogforge/shared": "workspace:*",
         "bullmq": "6.4.0",
         "ioredis": "^5.8.0",
@@ -94,6 +97,7 @@
         "@catalogforge/cleaning": "workspace:*",
         "@catalogforge/db": "workspace:*",
         "@catalogforge/grouping": "workspace:*",
+        "@catalogforge/shared": "workspace:*",
         "@google/genai": "1.52.0",
         "sanitize-html": "^2.17.0",
         "zod": "^4.0.0",
@@ -125,6 +129,20 @@
         "@types/papaparse": "^5.3.16",
       },
     },
+    "packages/pipeline": {
+      "name": "@catalogforge/pipeline",
+      "dependencies": {
+        "@catalogforge/cleaning": "workspace:*",
+        "@catalogforge/db": "workspace:*",
+        "@catalogforge/enrichment": "workspace:*",
+        "@catalogforge/grouping": "workspace:*",
+        "@catalogforge/ingestion": "workspace:*",
+        "@catalogforge/shared": "workspace:*",
+        "bullmq": "6.4.0",
+        "ioredis": "^5.8.0",
+        "zod": "^4.0.0",
+      },
+    },
     "packages/review": {
       "name": "@catalogforge/review",
       "dependencies": {
@@ -132,6 +150,7 @@
         "@catalogforge/db": "workspace:*",
         "@catalogforge/enrichment": "workspace:*",
         "@catalogforge/ingestion": "workspace:*",
+        "@catalogforge/shared": "workspace:*",
         "zod": "^4.0.0",
       },
     },
@@ -194,6 +213,8 @@
     "@catalogforge/grouping": ["@catalogforge/grouping@workspace:packages/grouping"],
 
     "@catalogforge/ingestion": ["@catalogforge/ingestion@workspace:packages/ingestion"],
+
+    "@catalogforge/pipeline": ["@catalogforge/pipeline@workspace:packages/pipeline"],
 
     "@catalogforge/review": ["@catalogforge/review@workspace:packages/review"],
 

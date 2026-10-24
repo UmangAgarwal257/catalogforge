@@ -133,9 +133,9 @@ async function retry<T>(action: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Explicit invocation only. No queue, source-status changes, approval or publication. */
+/** Deterministic grouping; callers may atomically register continuation via onComplete. No approval or publication. */
 export async function groupImport(storeId: string, importId: string, cleaningResultIds: string[], configInput: unknown,
-  options: { afterFamily?: (completedFamilies: number) => Promise<void>; beforeFamily?: () => Promise<void>; beforeFamilyCommit?: () => Promise<void> } = {}) {
+  options: { afterFamily?: (completedFamilies: number) => Promise<void>; beforeFamily?: () => Promise<void>; beforeFamilyCommit?: () => Promise<void>; onComplete?: (tx: Prisma.TransactionClient) => Promise<void> } = {}) {
   const prepared = await prepare(storeId, importId, cleaningResultIds, configInput);
   const db = getDb();
   const run = await retry(() => db.$transaction(async tx => {
@@ -192,6 +192,7 @@ export async function groupImport(storeId: string, importId: string, cleaningRes
     if (all !== prepared.rows.length || pending) throw new GroupingConflict("GROUPING_COUNT_MISMATCH");
     const current = await tx.groupingRun.findUniqueOrThrow({ where: { id: run.id } });
     if (current.status !== "COMPLETED") await tx.groupingRun.update({ where: { id: run.id }, data: { status: "COMPLETED", finishedAt: new Date() } });
+    await options.onComplete?.(tx);
   });
   return db.groupingRun.findUniqueOrThrow({ where: { id: run.id }, include: { rows: { orderBy: { sourceRowId: "asc" } } } });
 }

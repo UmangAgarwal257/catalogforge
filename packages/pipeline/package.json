@@ -1,0 +1,20 @@
+{
+  "name": "@catalogforge/pipeline",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/service.ts",
+    "./queue": "./src/queue.ts"
+  },
+  "dependencies": {
+    "@catalogforge/db": "workspace:*",
+    "@catalogforge/shared": "workspace:*",
+    "@catalogforge/cleaning": "workspace:*",
+    "@catalogforge/grouping": "workspace:*",
+    "@catalogforge/enrichment": "workspace:*",
+    "@catalogforge/ingestion": "workspace:*",
+    "bullmq": "6.4.0",
+    "ioredis": "^5.8.0",
+    "zod": "^4.0.0"
+  }
+}

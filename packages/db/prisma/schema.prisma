@@ -101,6 +101,7 @@ model Import {
   sourceRows       SourceRow[]
   productRevisions ProductRevision[]
   parseDispatch    ParseDispatch?
+  catalogTask      CatalogTask?
   groupingRun      GroupingRun?
 
   @@unique([id, storeId])
@@ -376,4 +377,24 @@ model ProductReviewEvent {
   revision ProductRevision @relation(fields: [revisionId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   @@unique([revisionId, requestId])
   @@unique([revisionId, afterVersion])
+}
+
+// One durable continuation per profiled import. Provider state stays on AI runs.
+model CatalogTask {
+  importId String @id @db.Uuid
+  storeId String @db.Uuid
+  phase String @default("CLEANING")
+  state String @default("PENDING")
+  fence Int @default(0)
+  attempts Int @default(0)
+  leaseUntil DateTime? @db.Timestamptz(3)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
+  runs Json @default("{}")
+  errorCode String?
+  errorMessage String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  import Import @relation(fields:[importId,storeId],references:[id,storeId],onDelete:Cascade,onUpdate:Restrict)
+  @@unique([importId,storeId])
+  @@index([storeId,state,nextAttemptAt])
 }

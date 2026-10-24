@@ -64,7 +64,22 @@ export async function importEndpoint(request: Request, id?: string, resource: "i
     checkBrowserOrigin(request);
     const { page, pageSize } = pageArguments(request);
     if (resource === "suppliers") {
-      if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
+      if(request.method==="POST"){
+        const chunks:Uint8Array[]=[];let size=0;
+        const reader=request.body?.getReader();
+        if(!reader)throw new IngestionError("INVALID_FIELDS","Send a supplier name and request ID as JSON.",400);
+        try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>4096){await reader.cancel();throw new IngestionError("INVALID_FIELDS","Supplier request too large.",413);}chunks.push(value);}}finally{reader.releaseLock();}
+        const text=Buffer.concat(chunks).toString("utf8");
+        let value:unknown;try{value=JSON.parse(text);}catch{throw new IngestionError("INVALID_FIELDS","Send a supplier name and request ID as JSON.",400);}
+        const body=z.object({name:z.string().trim().min(1).max(150),requestId:z.uuid()}).strict().safeParse(value);
+        if(!body.success)throw new IngestionError("INVALID_FIELDS","Enter a supplier name (1–150 characters) and request ID.",400);
+        const {getDb}=await import("@catalogforge/db");const db=getDb();
+        await db.supplier.createMany({data:[{id:body.data.requestId,storeId:config.DEV_STORE_ID,name:body.data.name}],skipDuplicates:true});
+        const item=await db.supplier.findFirst({where:{id:body.data.requestId,storeId:config.DEV_STORE_ID,name:body.data.name},select:{id:true,name:true}});
+        if(!item)throw new IngestionError("IDEMPOTENCY_CONFLICT","Supplier request ID already used.",409);
+        return Response.json(item,{headers:{"Cache-Control":"no-store"}});
+      }
+      if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
       return Response.json({ ...await listSuppliers(config.DEV_STORE_ID, page, pageSize), page, pageSize }, { headers: { "Cache-Control": "no-store" } });
     }
     if (request.method === "GET") {
@@ -77,13 +92,13 @@ export async function importEndpoint(request: Request, id?: string, resource: "i
     const form = await boundedFormData(request);
     const uploads = form.getAll("file");
     const file = uploads[0];
-    if (uploads.length !== 1 || !file || typeof file === "string" || form.getAll("supplierId").length !== 1 || form.getAll("idempotencyKey").length !== 1) {
+    if (uploads.length !== 1 || !file || typeof file === "string" || form.getAll("supplierId").length !== 1 || form.getAll("idempotencyKey").length !== 1 || form.getAll("profileId").length > 1) {
       throw new IngestionError("INVALID_FIELDS", "Provide exactly one file, supplierId, and idempotencyKey.", 400);
     }
     if (file.size > LIMITS.fileBytes) throw new IngestionError("FILE_TOO_LARGE", "Spreadsheet exceeds 10 MiB.", 413);
     const result = await registerImport(new LocalOriginalStorage(config.LOCAL_UPLOAD_DIR), {
       storeId: config.DEV_STORE_ID, supplierId: String(form.get("supplierId") ?? ""),
-      idempotencyKey: String(form.get("idempotencyKey") ?? ""), filename: file.name, bytes: new Uint8Array(await file.arrayBuffer())
+      idempotencyKey: String(form.get("idempotencyKey") ?? ""), filename: file.name, bytes: new Uint8Array(await file.arrayBuffer()), profileId: form.get("profileId")?String(form.get("profileId")):undefined
     });
     return Response.json({ importId: result.imported.id, status: result.imported.status, reused: result.reused }, { status: result.reused ? 200 : 202, headers: { "Cache-Control": "no-store" } });
   } catch (error) {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 // Deliberately small, explicit taxonomy; no free-form AI category authority.
-export const CATEGORIES = ["Home & Garden > Planters", "Home & Garden > Garden Accessories", "Home & Garden > Home Accessories"] as const;
+import { CATEGORY_KEYS } from "@catalogforge/shared/catalog";
+export const CATEGORIES = CATEGORY_KEYS;
 export const categorySchema = z.enum(CATEGORIES);
 const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,39}$/);
 export const fieldsSchema = z.object({

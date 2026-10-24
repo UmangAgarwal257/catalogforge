@@ -146,3 +146,9 @@ it("returns a correctable 422 when a price is entered without its required curre
  await expect(mutate("EDIT",body(1,{variants:[{variantId:v.variantId,priceMinor:"3499"}]}))).rejects.toMatchObject({status:422,code:"CURRENCY_REQUIRED"});
  expect((await load()).revision.editVersion).toBe(1);expect((await load()).events).toHaveLength(0);
 });
+
+it("requires human attestation for changed source descriptions regardless of language",async()=>{
+ const d=await load();d.revision.descriptionHtml="<p>Frostfest.</p>";
+ for(const link of d.sources)if(link.cleaningResult)link.cleaningResult.normalized={descriptionHtml:"<p>Nicht frostfest. Bei Frost ins Haus bringen.</p>"};
+ const issues=activeIssues(d).filter(i=>i.code==="SOURCE_DESCRIPTION_CHANGED");expect(issues).toHaveLength(3);expect(issues.every(i=>i.kind==="FACT"&&i.evidenceRequired)).toBe(true);expect(issues[0]!.message).toContain("cell citations alone do not establish semantic correctness");
+});

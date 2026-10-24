@@ -12,7 +12,7 @@ Supplier files often contain inconsistent prices, repeated rows, incomplete vari
 - A development-only CSV/XLSX upload API with private original-file preservation, asynchronous parsing, and paginated import details.
 - An independent worker with durable PostgreSQL dispatch, BullMQ retries, and restart-safe source-row persistence.
 - Supplier/source and product/revision database models with scoped relationships, canonical SKU uniqueness, protected original rows, and separate catalog snapshots.
-- Explicit deterministic cleaning/grouping services and one-product Gemini enrichment with source evidence, field confidence, durable attempts and protected drafts. Cleaning, grouping and generation run through explicit development commands.
+- Automatic cleaning, conservative grouping and real Gemini enrichment for two configured supplier profiles, with source evidence, durable checkpoints, free-tier quota pauses and protected drafts.
 - A local merchant review queue and editor with source evidence, variant corrections, audited decisions and approval without publication.
 - Shared TypeScript packages, configuration validation, and local development checks.
 
@@ -48,15 +48,14 @@ flowchart LR
     Web -->|Preserve original| Storage[Private local storage: development only]
     Worker[Bun worker] -->|Prisma| DB
     Worker -->|Read original by key| Storage
-    DB -->|Durable parse dispatch| Worker
+    DB -->|Durable parse and catalog continuation| Worker
     Worker -->|Schedule and consume| Redis[(Redis / BullMQ)]
-    Enrichment[Explicit one-product command] --> AI[Gemini API: Free tier required]
-    Enrichment --> DB
+    Worker --> AI[Gemini API: Free tier required]
     Worker -. Planned translation .-> AI
     Storefront[Storefront: planned Next.js routes] -. Published catalog reads .-> DB
 ```
 
-Solid connections represent implemented ingestion and explicit enrichment services; dashed connections represent planned catalog processing. Web and worker share the same private local storage directory.
+Solid connections represent implemented ingestion and catalog-processing services; dashed connections represent planned catalog processing. Web and worker share the same private local storage directory.
 
 PostgreSQL holds business state; Redis delivers asynchronous work. The planned storefront will read approved catalog data and precomputed translations, without calling AI or waiting for imports.
 
@@ -66,7 +65,7 @@ Code is organized under [apps/web](./apps/web), [apps/worker](./apps/worker), [p
 
 Prerequisites: Bun 1.3.12, Node.js 24, and Docker with Compose. Defaults use ports 3000 (web), 3001 (worker health), 5432 (PostgreSQL), and 6379 (Redis).
 
-From the repository root, copy [.env.example](./.env.example) to a local `.env` if one does not already exist. Set a local `POSTGRES_PASSWORD` and use its URL-encoded value in `DATABASE_URL`. Storage credentials remain optional; Gemini credentials and billing-disabled project confirmation are required only for the explicit enrichment command.
+From the repository root, copy [.env.example](./.env.example) to a local `.env` if one does not already exist. Set a local `POSTGRES_PASSWORD` and use its URL-encoded value in `DATABASE_URL`. Storage credentials remain optional; Gemini credentials and billing-disabled project confirmation are required for automatic enrichment; missing configuration pauses processing clearly.
 
 ```bash
 bun install --frozen-lockfile
@@ -74,6 +73,7 @@ bun run infra:up
 bun run db:generate
 bun run db:deploy
 bun run db:check
+bun run db:seed:dev
 bun run dev
 ```
 
@@ -85,7 +85,7 @@ bun run dev:worker
 
 Open [localhost:3000](http://localhost:3000) for the supplier-import dashboard. Stop applications with Ctrl+C; use `bun run infra:down` to stop local services while retaining their data. See the [development guide](./docs/DEVELOPMENT.md) for environment settings, migrations, and troubleshooting.
 
-To try ingestion, follow the [local upload setup and curl example](./docs/DEVELOPMENT.md#local-spreadsheet-ingestion). It requires explicit opt-in and a seeded store/supplier. These unauthenticated APIs are disabled in production and on Vercel.
+To try ingestion, follow the [local upload setup and curl example](./docs/DEVELOPMENT.md#local-spreadsheet-ingestion). It requires explicit opt-in and a development store. Create suppliers in the browser and choose the mapping profile matching the file. These unauthenticated APIs are disabled in production and on Vercel.
 
 ## Testing
 
@@ -105,12 +105,12 @@ Unit/component tests cover environment validation, parsing, local storage, uploa
 
 Database constraints reject cross-store supplier/import references, duplicate request keys within a supplier scope, and duplicate source coordinates. Original cells are stored as ordered JSON arrays so duplicate headers can be preserved. A PostgreSQL trigger protects source data and identity while allowing processing-state updates. File hashes and row fingerprints remain nonunique so intentional reprocessing and repeated supplier content are representable.
 
-Import registration and parse dispatch are committed together. Parsing validates the whole file before writing rows, checks the original hash, and uses fenced attempts and coordinate uniqueness for safe retries. Import metadata and original source cells are protected against updates. Parsed rows remain `PENDING`; import `COMPLETED` means ingestion finished, not catalog publication.
+Import registration and parse dispatch are committed together. Parsing validates the whole file before writing rows, checks the original hash, and uses fenced attempts and coordinate uniqueness for safe retries. Import metadata and original source cells are protected against updates. Parsed rows initially remain `PENDING`; import `COMPLETED` means parsing finished. Separate catalog counters show cleaning, grouping, enrichment and row review outcomes.
 
-Explicit grouping uses frozen cleaning selections and idempotent catalog writes. Enrichment validates exact source facts independently of model confidence, withholds unverified suggestions, preserves manual fields and rejects stale draft updates. Merchant edits and individual approval are audited; publication remains planned.
+Grouping uses frozen cleaning selections and idempotent catalog writes. Enrichment validates exact source facts independently of model confidence, withholds unverified suggestions, preserves manual fields and rejects stale draft updates. Merchant edits and individual approval are audited; publication remains planned.
 
 [EDGE-CASES.md](./EDGE-CASES.md) records expected failure behavior, implementation status, and planned verification.
 
 ## Current Limitations
 
-The dashboard and ingestion APIs are restricted to local development. Cleaning, grouping and enrichment currently require explicit developer calls; the dashboard does not schedule the catalog pipeline. Real enrichment requires a valid Gemini key and billing disabled on its owning project; there is no application test-stub or paid-provider fallback. Photo processing, translation, publication, storefront pages, exports and cost dashboards remain unimplemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.
+The dashboard and ingestion APIs are restricted to local development. Only the two documented supplier formats are mapped automatically; mismatched headers require a corrected upload. Free-tier quota can delay generation, and large evidence packets remain blocked for manual review. Real enrichment requires a valid Gemini key and billing disabled on its owning project; there is no production test-stub or paid-provider fallback. Photo processing, translation, publication, storefront pages, exports and cost dashboards remain unimplemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.

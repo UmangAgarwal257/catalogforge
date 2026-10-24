@@ -9,6 +9,7 @@
     "ioredis": "^5.8.0",
     "@catalogforge/ingestion": "workspace:*",
     "@catalogforge/enrichment": "workspace:*",
-    "zod": "^4.0.0"
+    "zod": "^4.0.0",
+    "@catalogforge/pipeline": "workspace:*"
   }
 }
