@@ -6,7 +6,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 
 - Requirements come from [PROJECT.md](./PROJECT.md); development rules and the selected stack come from [AGENTS.md](./AGENTS.md).
 - The system is a TypeScript modular monolith with a Next.js application and a separate Node.js worker. PostgreSQL on Supabase is authoritative for business state; Prisma provides database access. BullMQ/Redis schedules work, and Supabase Storage holds original files and photos.
-- Papa Parse handles CSV, ExcelJS handles XLSX, Zod validates external data, and Sharp processes images. The UI uses React, Tailwind, shadcn/ui, and TanStack Table. SSE supplies live progress. OpenAI or Gemini remains to be selected. Deployment targets remain Vercel, Railway, and Supabase; planned test tools are Vitest and k6.
+- Papa Parse handles CSV, ExcelJS handles XLSX, Zod validates external data, and Sharp processes images. The UI uses React, Tailwind, shadcn/ui, and TanStack Table. SSE supplies live progress. Gemini is the selected live enrichment provider; only Free-tier Standard text generation is allowed. Deployment targets remain Vercel, Railway, and Supabase; planned test tools are Vitest and k6.
 - The target is up to 10,000 supplier records and 2,000 photos per import. Byte limits, extraction limits, record-counting rules, and performance targets still need agreement.
 - The lifecycle is upload and preserve originals → parse/map → normalize/validate → group variants and match photos → enrich → translate → review → publish → storefront/export. Stages may require merchant intervention.
 - English is the canonical generated catalog language; German and French are precomputed translations. Country configuration selects language; other countries use English.
@@ -215,49 +215,49 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** AI returns prose, truncated JSON, wrong types, missing required fields, or invalid confidence values.
 - **Application should do:** Validate structured output with Zod and business rules, retry transient generation failures with a bounded policy, and record failure/review reasons after exhaustion.
 - **Why:** Syntactically valid JSON still may not be a valid product.
-- **Implementation status:** Not handled — AI integration, schema validation, and retry policy have not been implemented.
+- **Implementation status:** Handled and tested for explicit one-product enrichment — Gemini response JSON Schema plus Zod rejects malformed, incomplete or invalid candidates without draft writes. Automated test-stub and official Gemini SDK-adapter tests cover refusal/schema errors; bounded persisted retries cap all calls at three. A test stub is never proof of real model quality; generation requires a billing-disabled Google project. The operator confirmed the key/project match; three actual Gemini 3.5 Flash-Lite generation requests failed with HTTP 400 / INVALID_ARGUMENT without draft corruption. A full-schema diagnostic subsequently returned HTTP 200 after removing only two provider-facing array bounds; canonical Zod limits remain tested and unchanged. After local PostgreSQL became available, one genuine Terracotta enrichment completed with three exact source-backed fields accepted and an inferred category withheld despite confidence 100. Both frost restrictions and the null missing price were preserved. This single-product check does not establish general model accuracy; the accepted text already existed in the supplier-backed draft. Measurements and limitations are recorded in development notes.
 - **Planned test:** Stub malformed JSON, confidence outside 0–100, and valid JSON with missing variants; expect no invalid proposal accepted as ready.
 
 ### EC-25 — Invented claim or misleading citation
 - **What happens:** AI writes `organic` without evidence, invents a source coordinate, or converts `frost-resistant, not frost-proof` into `frost-proof`.
 - **Application should do:** Validate source existence and semantic support, reject unsupported claims from publishable content, and require review with the disputed source visible.
 - **Why:** A citation or high confidence score cannot make an unsupported claim true.
-- **Implementation status:** Not handled — evidence validation and claim review have not been implemented.
+- **Implementation status:** Handled and tested for constrained exact-source application — fabricated claims/citations, shortened qualifications and mismatched product/variant facts are withheld regardless of confidence. Whole descriptions and original cell/cleaner provenance remain intact. Arbitrary paraphrase entailment is not implemented; inferred suggestions remain review-only.
 - **Planned test:** Use labelled supported, negated, qualified, and fabricated claim fixtures; expect unsupported assertions blocked and qualifications preserved.
 
 ### EC-26 — Conflicting facts or multilingual source text
 - **What happens:** German notes contradict an English description, or one row says handmade while another says machine-made.
 - **Application should do:** Retain both sources, preserve restrictions, generate only supported content, and mark unresolved conflicts Needs review.
 - **Why:** Fluent output must not conceal disagreement or language-dependent qualifications.
-- **Implementation status:** Not handled — multilingual conflict handling has not been implemented.
+- **Implementation status:** Not handled end to end — conflicting mapped facts are withheld and all enrichment stays review-required. Free-form multilingual interpretation and general semantic contradiction detection remain unverified; no stronger model may invent missing facts.
 - **Planned test:** Supply cross-language contradictions and care instructions; expect visible evidence and no arbitrary resolution.
 
 ### EC-27 — Low, missing, or unjustifiably high confidence
 - **What happens:** Confidence is absent for a generated field, below threshold, or high despite conflicting evidence.
 - **Application should do:** Require per-field confidence where applicable, apply deterministic validation independently, and route uncertainty/conflicts to review regardless of model confidence.
 - **Why:** Self-reported confidence is a review signal, not a calibrated accuracy guarantee.
-- **Implementation status:** Not handled — confidence policy and field coverage checks have not been implemented.
+- **Implementation status:** Handled and tested for one-product structured responses — confidence must be 0–100; values below configured threshold (initially 85) are withheld. Factual validation always wins over confidence. Calibration on a representative live-model dataset remains unimplemented.
 - **Planned test:** Combine low-confidence valid fields and high-confidence invalid fields; expect both policy-based and business-rule review reasons.
 
 ### EC-28 — Supplier text contains instructions for the model
 - **What happens:** A description asks AI to ignore validation, disclose credentials, or add promotional claims.
 - **Application should do:** Treat supplier content as untrusted data, keep secrets out of prompts, restrict output structure, and validate claims independently of prompt instructions.
 - **Why:** Supplier text must not acquire application authority.
-- **Implementation status:** Not handled — prompt boundaries and defensive output validation have not been implemented.
+- **Implementation status:** Not handled end to end — the scoped provider has no tools or credentials in prompts, uses explicit untrusted-data instructions, and exact-fact validation prevents arbitrary generated additions. No comprehensive live-model prompt-injection evaluation has been completed; supplier text itself is not certified business truth.
 - **Planned test:** Embed hostile instructions in rows/photos; expect no disclosure, unauthorized action, or publishable unsupported claim.
 
 ### EC-29 — Timeout after provider may have completed
 - **What happens:** The request times out or the worker crashes after provider execution but before saving the response.
 - **Application should do:** Persist request/attempt identity, retrieve results where supported, retry under a bounded policy, and acknowledge potentially duplicated provider spend while preventing duplicate catalog effects.
 - **Why:** Exactly-once external execution cannot be assumed across an ambiguous network failure.
-- **Implementation status:** Not handled — provider request reconciliation has not been implemented.
+- **Implementation status:** Handled and tested for injected interruption in explicit enrichment calls — durable attempts retain unknown spend reservations, saved output can apply without a second call, and expired callers are fenced. Exactly-once provider billing and provider-side response reconciliation are not guaranteed; no separate enrichment SIGKILL experiment is claimed.
 - **Planned test:** Simulate completed-but-unacknowledged requests; expect one accepted business result and transparent uncertain/duplicate spend attribution.
 
 ### EC-30 — Rate limit or provider outage
 - **What happens:** Provider returns rate limits, retryable server failures, invalid credentials, or a sustained outage.
 - **Application should do:** Delay retryable work with exponential backoff/jitter and provider guidance; show an estimated resume time. Treat invalid credentials as intervention-required, cap retries, and preserve completed work.
 - **Why:** Immediate retries worsen outages; a paused queue should not look like lost work.
-- **Implementation status:** Not handled — provider error classification, pause display, and retries have not been implemented.
+- **Implementation status:** Handled and tested for one-product durable retries — 429/5xx/timeouts have bounded delays; authentication/refusal requires intervention. Automated test-stub and official Gemini SDK-adapter tests exercise errors and Gemini model metadata access returned HTTP 200, and earlier real HTTP 400 / INVALID_ARGUMENT failures left drafts intact. Following the targeted provider-schema compatibility fix, real Terracotta generation returned HTTP 200; this is not a live outage/retry evaluation. UI pause/countdown and bulk outage handling remain absent.
 - **Planned test:** Inject 429, 5xx, and authentication failures; inspect delayed scheduling, retry bounds, visible status, and eventual outcomes after recovery or exhaustion.
 
 ### EC-31 — Partial or misassociated batch results
@@ -352,7 +352,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A merchant corrects a field before an older generation result is saved.
 - **Application should do:** Preserve field-level manual ownership and reject or flag stale automated changes rather than overwriting them.
 - **Why:** Merchant corrections take precedence regardless of job completion order.
-- **Implementation status:** Not handled end to end — grouping preserves published manual fields/markers, records supplier disagreements and refuses existing merchant-edited drafts. Nested ownership protects the parent object conservatively. AI in-flight edit races and editing/approval APIs are not implemented.
+- **Implementation status:** Not handled end to end — enrichment locks/revalidates frozen input and editVersion, preserves manual fields/markers and rejects stale results; integration tests cover edits during generation and unchanged published snapshots. Merchant editing/review UI and future AI orchestration remain absent.
 - **Planned test:** Delay a generation response, save a merchant edit, then release the response; expect the edit retained and any conflict visible.
 
 ### EC-41 — Approval is stale or bulk approval includes invalid products
@@ -449,14 +449,14 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** Requests retry, usage events repeat, or the provider omits token/cost data.
 - **Application should do:** Attribute distinct billable attempts by request identity, deduplicate repeated usage events, include failed-request spend when known, and label missing data unknown or estimated.
 - **Why:** Business-result deduplication must not erase actual repeated charges or invent zero cost.
-- **Implementation status:** Not handled — AI usage recording and reconciliation have not been implemented.
+- **Implementation status:** Handled and tested for explicit enrichment attempts — provider-reported tokens, test-stub usage, zero estimated Free-tier cost and unknown usage are distinct. Run/attempt uniqueness prevents replayed application from inflating usage; interrupted calls still consume local quota. Provider invoice reconciliation and billing-status verification through an API key are not implemented.
 - **Planned test:** Replay usage events and simulate retries/missing usage; expect accurate per-product/model/import aggregation without double-counting one provider event.
 
 ### EC-54 — Routing savings are misleading or budget is exhausted
 - **What happens:** Cheap-model results require escalation, pricing changes, batch discounts differ, or an import reaches a spending limit.
 - **Application should do:** Record pricing/model metadata and all routed attempts, state the baseline for savings estimates, and recommend pausing new billable work at approved budgets while exposing in-flight spend uncertainty.
 - **Why:** Escalation can cost more than the baseline, and estimates are not invoices. Budget policy remains to be approved.
-- **Implementation status:** Not handled — routing, price versioning, savings calculation, and budget enforcement have not been implemented.
+- **Implementation status:** Handled and tested for the $0 application policy — nonzero rates/budgets and live escalation are rejected; database-backed one-call/minute and rolling daily quota reservations include failed/unknown attempts. At most three calls per run, delayed 429 recovery and no paid fallback are tested. Project billing must stay disabled externally; a config flag cannot verify that fact. Paid provider Batch/caching and savings claims remain absent.
 - **Planned test:** Compare simple versus escalated requests, changed price schedules, and a low budget; expect explainable totals, possibly negative savings, and explicit pause behavior.
 
 ### EC-55 — Metrics hide failures or use misleading denominators
@@ -475,7 +475,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - Parsing rules need agreement: accepted encodings/delimiters, sheet selection, formulas, hidden/merged cells, headers, and exact treatment of empty or malformed records.
 - Business validation needs agreement: required fields per product/variant, supported taxonomy, confidence thresholds, zero prices, currency precision/range, mixed-currency listings, and unit rounding. Integer cents in the assignment must be reconciled with general integer minor units before expanding currency support.
 - Limits need agreement: upload bytes, archive expansion, decoded image dimensions, field sizes, model context, attempts, concurrency, timeouts, and retention of originals/attempts.
-- AI provider/model selection, batch support, claim verification method, evaluation fixtures, and routing thresholds remain open. Confidence and citations alone cannot guarantee semantic accuracy.
+- Gemini is selected for Free-tier Standard text enrichment. Project model/quota availability and live evaluation require verification; provider batching, broad semantic claim verification and calibrated confidence remain unresolved. Confidence and citations alone cannot guarantee semantic accuracy.
 - Translation decisions remain open: complete country mappings, whole-product versus per-field English fallback, serving Out-of-date manual text, and whether unavailable localized content blocks publication. Manual corrections must still be preserved and marked stale.
 - Performance/recovery objectives remain open: latency percentiles, allowed error rate, recovery time, supported concurrent imports, and cache freshness. A fast storefront must be measured under import load, not asserted.
 - HTML sanitizer and ZIP-handling implementation/dependency choices require explanation and approval. Authentication, access control, key protection, and storage ownership must be settled before exposing merchant-write operations publicly; full multi-store support remains optional.

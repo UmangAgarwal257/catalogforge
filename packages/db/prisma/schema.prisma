@@ -226,6 +226,8 @@ model ProductRevision {
   groupingRun             GroupingRun?          @relation(fields: [groupingRunId, originImportId, storeId], references: [id, importId, storeId], onDelete: Restrict, onUpdate: Restrict)
   groupingResults         GroupingRowResult[]
 
+  enrichmentRuns AIEnrichmentRun[]
+
   @@unique([id, groupingRunId, storeId])
   @@unique([id, productId, storeId])
   @@unique([id, storeId])
@@ -307,4 +309,51 @@ model GroupingRowResult {
 
   @@id([runId, sourceRowId])
   @@index([runId, groupKey])
+}
+
+// Frozen one-product input. Retries use the existing run ID.
+model AIEnrichmentRun {
+  id              String @id @default(uuid()) @db.Uuid
+  revisionId      String @db.Uuid
+  productId       String @db.Uuid
+  storeId         String @db.Uuid
+  inputHash       String @db.VarChar(64)
+  policyHash      String @db.VarChar(64)
+  inputSnapshot   Json
+  policySnapshot  Json
+  state           String @default("PENDING")
+  fence           Int @default(0)
+  leaseUntil      DateTime? @db.Timestamptz(3)
+  nextAttemptAt   DateTime? @db.Timestamptz(3)
+  result          Json?
+  errorCode       String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt      DateTime? @db.Timestamptz(3)
+  revision        ProductRevision @relation(fields: [revisionId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  attempts        AIEnrichmentAttempt[]
+  @@unique([revisionId, inputHash, policyHash])
+  @@unique([id, storeId])
+}
+
+model AIEnrichmentAttempt {
+  id                  String @id @default(uuid()) @db.Uuid
+  runId               String @db.Uuid
+  storeId             String @db.Uuid
+  number              Int
+  fence               Int
+  model               String
+  requestId           String?
+  state               String @default("STARTED")
+  usageKind           String @default("UNKNOWN")
+  inputTokens         Int?
+  outputTokens        Int?
+  estimatedMicroUsd   Int?
+  reservedMicroUsd    Int
+  output              Json?
+  errorCode           String?
+  latencyMs           Int?
+  startedAt           DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt          DateTime? @db.Timestamptz(3)
+  run                 AIEnrichmentRun @relation(fields: [runId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([runId, number])
 }

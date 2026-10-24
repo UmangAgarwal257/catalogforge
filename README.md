@@ -12,6 +12,7 @@ Supplier files often contain inconsistent prices, repeated rows, incomplete vari
 - A development-only CSV/XLSX upload API with private original-file preservation, asynchronous parsing, and paginated import details.
 - An independent worker with durable PostgreSQL dispatch, BullMQ retries, and restart-safe source-row persistence.
 - Supplier/source and product/revision database models with scoped relationships, canonical SKU uniqueness, protected original rows, and separate catalog snapshots.
+- Explicit deterministic cleaning/grouping services and one-product Gemini enrichment with source evidence, field confidence, durable attempts and protected drafts. These are not yet connected to the dashboard.
 - Shared TypeScript packages, configuration validation, and local development checks.
 
 **Planned workflow**
@@ -31,8 +32,9 @@ The planned catalog pipeline will flag missing or conflicting data for review ra
 | Local services | Docker Compose with persistent PostgreSQL/Redis volumes |
 | Parsing and validation | Papa Parse, ExcelJS, Zod |
 | Checks | Vitest, ESLint, TypeScript |
+| AI enrichment | Official Google Gen AI SDK; Gemini Developer API on a billing-disabled Free-tier project |
 
-The selected future integrations are OpenAI or Gemini, Supabase Storage, and Sharp.
+The selected future integrations are Supabase Storage and Sharp.
 
 ## Architecture
 
@@ -47,11 +49,13 @@ flowchart LR
     Worker -->|Read original by key| Storage
     DB -->|Durable parse dispatch| Worker
     Worker -->|Schedule and consume| Redis[(Redis / BullMQ)]
-    Worker -. Enrichment and translation .-> AI[AI provider]
+    Enrichment[Explicit one-product command] --> AI[Gemini API: Free tier required]
+    Enrichment --> DB
+    Worker -. Planned translation .-> AI
     Storefront[Storefront: planned Next.js routes] -. Published catalog reads .-> DB
 ```
 
-Solid connections represent implemented development ingestion; dashed connections represent planned catalog processing. Web and worker share the same private local storage directory.
+Solid connections represent implemented ingestion and explicit enrichment services; dashed connections represent planned catalog processing. Web and worker share the same private local storage directory.
 
 PostgreSQL holds business state; Redis delivers asynchronous work. The planned storefront will read approved catalog data and precomputed translations, without calling AI or waiting for imports.
 
@@ -61,7 +65,7 @@ Code is organized under [apps/web](./apps/web), [apps/worker](./apps/worker), [p
 
 Prerequisites: Bun 1.3.12, Node.js 24, and Docker with Compose. Defaults use ports 3000 (web), 3001 (worker health), 5432 (PostgreSQL), and 6379 (Redis).
 
-From the repository root, copy [.env.example](./.env.example) to a local `.env` if one does not already exist. Set a local `POSTGRES_PASSWORD` and use its URL-encoded value in `DATABASE_URL`. Leave the future AI/storage credentials blank.
+From the repository root, copy [.env.example](./.env.example) to a local `.env` if one does not already exist. Set a local `POSTGRES_PASSWORD` and use its URL-encoded value in `DATABASE_URL`. Storage credentials remain optional; Gemini credentials and billing-disabled project confirmation are required only for the explicit enrichment command.
 
 ```bash
 bun install --frozen-lockfile
@@ -102,10 +106,10 @@ Database constraints reject cross-store supplier/import references, duplicate re
 
 Import registration and parse dispatch are committed together. Parsing validates the whole file before writing rows, checks the original hash, and uses fenced attempts and coordinate uniqueness for safe retries. Import metadata and original source cells are protected against updates. Parsed rows remain `PENDING`; import `COMPLETED` means ingestion finished, not catalog publication.
 
-Idempotent catalog writes, evidence-backed AI claims, and merchant approval/publication safeguards remain planned.
+Explicit grouping uses frozen cleaning selections and idempotent catalog writes. Enrichment validates exact source facts independently of model confidence, withholds unverified suggestions, preserves manual fields and rejects stale draft updates. Merchant approval/publication remains planned.
 
 [EDGE-CASES.md](./EDGE-CASES.md) records expected failure behavior, implementation status, and planned verification.
 
 ## Current Limitations
 
-The dashboard and ingestion APIs are restricted to local development. Normalization, product grouping, photo processing, AI generation, translation, merchant review/publication, storefront pages, exports, and cost reporting are not implemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.
+The dashboard and ingestion APIs are restricted to local development. Cleaning, grouping and enrichment currently require explicit developer calls; the dashboard does not run the catalog pipeline. Real enrichment requires a valid Gemini key and billing disabled on its owning project; there is no application test-stub or paid-provider fallback. Photo processing, translation, merchant review/publication, storefront pages, exports and cost dashboards remain unimplemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.

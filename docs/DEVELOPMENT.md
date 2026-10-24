@@ -57,7 +57,8 @@ Root and workspace scripts explicitly load the local environment with Bun. Shell
 | `DEV_INGESTION_ENABLED` | Explicit opt-in for local unauthenticated ingestion; default false |
 | `DEV_STORE_ID`, `DEV_SUPPLIER_ID` | Explicit development scope and seed identities; not authentication |
 | `LOCAL_UPLOAD_DIR` | Absolute private directory shared by the host web and worker processes |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY` | Reserved, optional, unused |
+| `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_BILLING_DISABLED` | Real one-product enrichment; credentials and billing-disabled attestation required |
+| `GEMINI_REQUESTS_PER_DAY`, `GEMINI_INPUT_TOKENS_PER_MINUTE` | Conservative database-backed free-tier request/token limits |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Reserved, optional, unused |
 
 Host applications connect to `127.0.0.1`, not Compose service names. If a database/Redis host port changes, change the corresponding connection URL too. `WEB_APP_URL` does not configure the Next.js listener: for another web port, use `bun run dev --port 3002` and set the matching URL.
@@ -367,6 +368,89 @@ Local Bun 1.3.12/PostgreSQL checks on 2026-10-23 used disposable completed impor
 | 10,000 | 6,028 ms | 780.6 | 1 / 10,000 / 1 / 10,000 / 10,000 |
 
 Every run reached COMPLETED with exactly the selected count of APPLIED outcomes and no pending records. These are individual diagnostic runs, not a throughput benchmark: the smaller cases also ran alongside verification work, so times must not be extrapolated or compared as a scaling curve. The service time includes database reads, policy validation, planning and transactional writes; it excludes upload, spreadsheet parsing, fixture cleaning/setup and any queue wait. Database-only time is not separately instrumented. OS peak RSS includes fixture setup, dependencies and runtime allocation, not just grouping; it is neither a grouping-only peak nor a hard maximum. Compact per-result manifest hashing avoids an additional import-sized evidence copy. Longer descriptions, more history, concurrent stores or different family distributions may consume more resources. This does not establish production worker sizing, storefront latency or a 1,000,000-product capacity claim.
+
+## One-product Gemini enrichment
+
+[packages/enrichment](../packages/enrichment) enriches an existing unpublished grouped proposal using the official `@google/genai` SDK. Gemini is the only application provider. There is no application stub mode or paid-provider fallback. The deterministic stub lives in a separate test module, rejects non-test execution, and is not evidence of real AI quality.
+
+Apply the additive migration and generate the client with `bun run db:deploy` and `bun run db:generate`. Set `GEMINI_API_KEY` and verify in Google AI Studio that **billing is disabled for the project owning that key** before setting `GEMINI_BILLING_DISABLED=true`. Otherwise the command fails before any generation. Missing/invalid credentials fail visibly; they never select a stub. Do not commit credentials.
+
+```bash
+# Uses REAL Gemini with a disposable three-row Terracotta product.
+# Deletes only that fixture and its temporary audits afterward; output includes
+# real provider tokens, timing, accepted/withheld assertions and fixture metrics.
+bun run enrich:one --demo
+
+# Enrich an existing grouped proposal and retain its database audit records.
+bun run enrich:one STORE_UUID REVISION_UUID
+
+# Resume the exact same paused/interrupted run when nextAttemptAt is due.
+bun run enrich:one --resume STORE_UUID RUN_UUID
+```
+
+The command prints its run ID before provider work. Exit 0 means completed enrichment requiring review, 2 means durable quota/retry pause, and 1 means failure. Explicitly resume a paused run; no enrichment scheduler or HTTP endpoint has been added. `--demo` is a real-provider fixture command, not a simulated model. The configured development store scope is not authentication.
+
+### Free-only policy, quotas and usage
+
+`GEMINI_MODEL` defaults to `gemini-2.5-flash-lite`. The reviewed Standard-text allowlist also permits `gemini-2.5-flash` and `gemini-3.5-flash-lite`; unreviewed models are rejected even if configured. Models are not switched automatically. The key's non-generating model metadata request returned HTTP 200 for Flash-Lite with generateContent support. Current [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) lists free input/output for these models on the Free tier; [structured outputs](https://ai.google.dev/gemini-api/docs/structured-output) provide JSON Schema output, still checked locally with Zod and factual rules.
+
+**The $0 guarantee depends on Cloud Billing staying disabled.** Gemini has no per-request “free tier only” selector, and an API key/model metadata response does not disclose project billing status. The API key cannot inspect Cloud Billing without separate authorized Google Cloud credentials. A zero configured rate is not a billing control. The startup flag is an operator attestation, not independently verified billing status. Google documents [disabling billing to return a project to Free tier](https://ai.google.dev/gemini-api/docs/billing). Do not enable that flag on a billed project. No code enables billing, uses Vertex/ADC, creates caches, submits provider batches, invokes tools or escalates to a paid model.
+
+Runtime policy requires exactly zero rates and a $0 run budget, with no live escalation. Any nonzero rate/budget is rejected before creating a run. Application-level quota reservations use existing attempt records under a PostgreSQL advisory transaction lock: at most one generation per rolling minute across all processes using this database, a default five attempts per rolling 24 hours (`GEMINI_REQUESTS_PER_DAY`, capped at 20), and a conservative input bound of 10,000 tokens per minute (`GEMINI_INPUT_TOKENS_PER_MINUTE`). There is no assumption that Google's actual project limits equal these local limits; Google limits may be lower and are shared with applications outside this database. Check [active project rate limits](https://ai.google.dev/gemini-api/docs/rate-limits). Input above the configured conservative token budget is rejected rather than truncated.
+
+Every call, including failed and unknown attempts, consumes local request quota. There are at most three calls per run. Local quota exhaustion persists RETRY_WAIT/nextAttemptAt without creating a call; 429 persists a delay of at least 60 seconds and respects longer Google RetryInfo delays. There is no paid fallback or key rotation. Authentication/refusal requires intervention; retryable server/connection/schema failures remain bounded. Daily work can remain paused until its rolling window expires. These controls favor a reliable one-product check over rapid bulk processing.
+
+The SDK is pinned to 1.52.0. In that version, omitting `retryOptions` takes a single-fetch path. Setting attempts:1 invokes a wrapper that discards HTTP status/RetryInfo; adapter tests reproduce this distinction and verify a single request for 401/403/429/503. Application code owns all retries. Configuration uses a 60-second timeout, abort signal, JSON MIME type and responseJsonSchema. Gemini 2.5 sends one candidate and zero thinking budget; Gemini 3.5 Flash-Lite uses MINIMAL thinking and omits candidateCount/temperature. All responses must still contain exactly one completed candidate. No raw provider error message/header/key is logged or persisted.
+
+Provider-reported prompt tokens and candidate-plus-thinking tokens are stored separately from latency. Known usage has zero **estimated free-tier** micro-USD cost, conditional on the confirmed project tier; this is not invoice verification. Missing usage stays UNKNOWN/null rather than fabricated zero tokens. The existing audit usage label MOCK is reserved for automated tests only. Durable saved responses can apply after an interruption without another generation; uncertain calls may have consumed quota and are not “free retries.”
+
+### Evidence and safe draft application
+
+AIEnrichmentRun freezes a content hash, policy hash, proposal/variant snapshots, grouping identity and exact source/cleaner evidence manifest. AIEnrichmentAttempt records every call, model, request identifier, bounded output/errors, duration, usage and cost/reservation. SQL compound foreign keys protect revision/product/store ownership; frozen-input/terminal-outcome and audit-output triggers prevent accidental replacement. A row lock, 90-second lease and monotonic fencing token coordinate callers. A late superseded call cannot update the draft; its uncertain reservation remains visible. Normal child-first fixture deletion is supported.
+
+Source-backed facts retain original cell text, zero-based column index, value pointer, full-cell text span, import and exact cleaning-result ID. The cleaner's version/configuration identity is verified and its output recomputed from immutable source cells. Approved transformations and configuration paths remain explicitly attributed. Configuration-only defaults are not promoted to supplier facts. Only this proposal's linked rows are eligible, and all must belong to the same supplier/store; inherited older-import evidence is allowed only through those links. Current code supports the current cleaner version and `/value` textual evidence; other versions or pointers require explicit adaptation.
+
+Automatically applied factual values must match complete validated fact values exactly, with matching field and product/variant scope. Whole sanitized descriptions are indivisible: dropping a restriction or selecting a substring fails validation. Product-wide facts must agree across contributing rows; unresolved values are withheld. No JavaScript fuzzy matching, unverified paraphrase or confidence-100 exception exists. AI wording and inferred classifications remain separate withheld suggestions. Generated HTML is sanitized again. This intentionally limits rewriting quality: free-form semantic entailment, multilingual interpretation and general contradiction detection are not proven. Supplier assertions themselves are evidence, not externally certified truth.
+
+The response requests title, description, category, tags and attributes together, with 0–100 confidence and evidence IDs per value. The initial threshold is 85, a routing rule rather than calibrated probability. Category inference remains withheld unless grounded by a permitted category fact and allowlist; the Terracotta demo therefore leaves categoryKey null. It retains the misspelling `terracota` because no approved alias corrects it. No category taxonomy beyond the explicit fixture allowlist is claimed.
+
+Application locks and rechecks the draft, product, variant snapshots and exact evidence fingerprints. Published/approved/rejected proposals are ineligible; stale input aborts the entire update. Manual field markers and protected values win, including nested parent ownership. Existing review reasons are retained, and every AI result stays NEEDS_REVIEW. The run records verified `accepted`, actually `applied` and `withheld` fields separately. Variant prices/options/weights, stable identities, SourceRow statuses, original cells and published pointers/snapshots are never written. Missing prices remain null. Creating a new run after inputs/settings change is an explicit new generation, not a retry; retry by run ID.
+
+### Verification, genuine output evaluation and limitations
+
+```bash
+bun --env-file=.env run node node_modules/vitest/vitest.mjs run packages/enrichment/src/validation.test.ts tests/enrichment.integration.test.ts
+bun run test
+bun run test:integration
+bun run typecheck
+bun run lint
+bun run build
+```
+
+Automated tests exercise exact evidence/negation preservation, invented and high-confidence claims, invalid/refused/truncated Gemini responses through the official SDK, manual ownership, stale inputs, concurrent calls, retry fencing, rollback, unknown usage, $0 policy and quota exhaustion. Stub outputs are test inputs only and must not be cited as live model quality.
+
+The real three-row/two-variant Terracotta fixture has fixed hand labels defined **before** generation in [fixture.ts](../packages/enrichment/src/fixture.ts). The command reports actual applied field assertions, supported-assertion precision at that whole-field granularity, both mandatory qualifications, coverage across title/description/category/tags/attributes, abstentions, withheld suggestions, provider-reported token usage, provider latency and total service time. Review the original provider output retained on the attempt, not just HTTP success. A missing 30 cm price/currency must remain null; frost-resistant must never become frost-proof. Category inference remains a withheld suggestion, even at confidence 100. No live score is inferred from deterministic tests or an inaccessible API.
+
+The operator confirmed the configured key belongs to Free-tier project `gen-lang-client-0547398767` with billing not configured. The loaded key matched the supplied environment snapshot without exposing it. Earlier real Terracotta requests returned HTTP 400 / INVALID_ARGUMENT before response parsing. A controlled diagnostic isolated the full response schema: removing only provider-facing `fields.maxItems = 64` and nested `factIds.maxItems = 100` restored compatibility. All canonical Zod limits remain enforced; a regression compares the complete wire schema against the canonical schema minus exactly those two properties. This does not establish which bound independently caused the rejection.
+
+With the adjusted schema, the latest real full-schema diagnostic returned HTTP 200 / STOP in 1,224 ms (17 input / 15 output tokens). After starting the existing local PostgreSQL/Redis services, one real `gemini-3.5-flash-lite` Terracotta generation completed through the audited persistence service: HTTP 200, 2,134 ms provider latency, 2,220 ms service time, 2,241 reported input / 402 output tokens, zero estimated free-tier micro-USD. There was one provider call, no retry or paid fallback. The model returned `Terracotta Pot`, the complete qualified description and `attributes.colour = terracota`; all three matched exact source-backed facts and were applied. Its inferred `Home & Garden > Planters` category was withheld despite confidence 100, so category stayed null; no tags were generated. Accepted whole-field precision was 3/3, qualification retention 2/2 and applied field coverage 3/5 on this single labeled product (three source rows, two variants). These tiny denominators do not establish general AI accuracy or writing quality: the applied text already existed in the grouped draft.
+
+The persisted draft stayed NEEDS_REVIEW, editVersion advanced from 1 to 2, and prior cleaning/price review reasons remained. Both `not frost-proof` and `Bring indoors below 0 °C` were present in the actual generated and applied description. Source cells, variant snapshots, manual markers and the null published pointer were unchanged; the 30 cm variant's price/currency stayed null. This fixture had no manually owned fields or existing published revision; those protections are covered separately by integration tests. Disposable fixture/audit records were removed after redacted evidence capture outside the repository. Billing stayed disabled by operator confirmation; zero-budget controls remained enabled. Focused verification passed 56 unit/integration tests, type checking, ESLint and the production build.
+
+Limits remain 100 linked source rows per product and a 24,000-byte prompt/schema budget, further constrained by the configured token quota. There is no automatic bulk scheduler, enrichment Redis dispatch, merchant review UI, translation, photo processing, publication or separate-process enrichment SIGKILL experiment. Explicit restart and injected interruption/fencing tests cover this service; ingestion recovery remains separate coverage. Existing Bun multipart/jsdom and buffered-XLSX limitations below remain unchanged.
+
+### Path to fewer requests and future batching
+
+Competitor documentation supplies workflow ideas, not copied implementation. [Plytix Bulk AI](https://help.plytix.com/en/bulk-ai) selects products/attributes, offers “fill if empty” and previews one product before bulk execution. [Plytix automations](https://help.plytix.com/en/automations) use conditions and suspend AI work when credits are exhausted. [Akeneo AI configurations](https://help.akeneo.com/en_US/serenity-boost-your-productivity/manage-your-ai-configurations) centralize reusable instructions and selected source/target attributes. These patterns support selective work and preview-first evaluation; they do not establish competitors' internal caches or measured savings.
+
+For CatalogForge, the realistic next steps are:
+
+1. **Skip unchanged input:** current same-run retries already reuse saved output. Add an explicit scoped semantic generation fingerprint (source facts, evidence identity, manual ownership, target fields, prompt/model/validator configuration) to skip unchanged products across repeated imports. Current input hashes include editVersion and proposal identity; do not claim cross-import caching is already implemented.
+2. **Reuse validated results locally:** retain immutable generation results in PostgreSQL, with store/supplier scope and exact provenance. Revalidate before applying to another draft; never reuse across ownership or changed evidence. Local result reuse needs no provider request and no paid cache storage.
+3. **Select only missing/changed, unowned fields:** preserve already reviewed fields and avoid spending a call to replace them. Keep one product plus variants per request rather than one request per row/field.
+4. **Batch delivery later:** add a durable product work manifest, bounded concurrency, per-product correlation IDs, partial-result reconciliation and the same draft fencing. Application batching must still obey free RPM/TPM/RPD limits; it does not mean all products fit in a giant prompt. Google's [pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists provider Batch as unavailable on the 2.5 Flash-Lite Free tier, while 3.5 Flash-Lite lists free Batch input/output. No provider Batch path is implemented: project eligibility, separate quotas and durable per-product reconciliation must be reviewed before enabling it. Explicit context caching remains unavailable on these Free tiers and stays disabled. Implicit provider caching is an optional optimization, never an assumed quota or billing exemption.
+
+No automatic batching, cross-import result cache or request-savings benchmark is implemented in this milestone.
 
 ## Health and readiness
 

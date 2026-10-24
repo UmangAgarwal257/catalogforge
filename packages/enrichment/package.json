@@ -1,0 +1,25 @@
+{
+  "name": "@catalogforge/enrichment",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/persistence.ts",
+    "./contracts": "./src/contracts.ts",
+    "./validation": "./src/validation.ts",
+    "./providers": "./src/providers.ts",
+    "./fixture": "./src/fixture.ts",
+    "./test-stub": "./src/test-stub.ts",
+    "./config": "./src/config.ts"
+  },
+  "dependencies": {
+    "@catalogforge/db": "workspace:*",
+    "@catalogforge/cleaning": "workspace:*",
+    "@catalogforge/grouping": "workspace:*",
+    "sanitize-html": "^2.17.0",
+    "zod": "^4.0.0",
+    "@google/genai": "1.52.0"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.16.0"
+  }
+}
