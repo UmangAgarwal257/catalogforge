@@ -7,6 +7,8 @@
     "@catalogforge/shared": "workspace:*",
     "bullmq": "6.4.0",
     "ioredis": "^5.8.0",
-    "@catalogforge/ingestion": "workspace:*"
+    "@catalogforge/ingestion": "workspace:*",
+    "@catalogforge/enrichment": "workspace:*",
+    "zod": "^4.0.0"
   }
 }

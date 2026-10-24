@@ -12,7 +12,7 @@ export function developmentConfig() {
   return parsed.data;
 }
 
-function checkBrowserOrigin(request: Request): void {
+export function checkBrowserOrigin(request: Request): void {
   const target = new URL(request.url);
   const loopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
   // Next.js may canonicalize Request.url to localhost even when the browser used

@@ -452,6 +452,51 @@ For CatalogForge, the realistic next steps are:
 
 No automatic batching, cross-import result cache or request-savings benchmark is implemented in this milestone.
 
+## Merchant review and approval
+
+Open `/products` for the searchable proposal queue (10/25/50/100 per page). Open a proposal for the editor, original source cells, exact cleaning transformations, Gemini accepted/applied/withheld fields and merchant history. AI confidence belongs to the recorded output, not to later merchant edits. The initial explicit category list is intentionally small and lives in the browser-safe review contract; it is not a complete external taxonomy.
+
+The six API operations are GET `/api/product-revisions`, GET/PATCH `/api/product-revisions/:id`, GET `/api/product-revisions/:id/evidence`, POST `/api/product-revisions/:id/approve` and POST `/api/product-revisions/:id/reject`. All use the existing local development opt-in, loopback/origin checks and configured store scope. Reads are no-store; request bodies are limited to 128 KiB and validated with Zod. There is no production authentication or public write API. The store ID is not an authentication mechanism.
+
+Mutations lock Product then ProductRevision, check expectedEditVersion, and atomically save a ProductReviewEvent. Each request ID is unique within its revision; exact replay returns the original event even after approval, while reuse with different content returns 409. Different stale writes return 409 and the UI retains local edits. An uncertain network outcome pauses editing and retries the original body/request ID. Save before approval/rejection. There is no automatic retry with a new request ID.
+
+Changed product fields become manually owned; attributes are conservatively owned as a whole. Variant markers are exactly `priceMinor`, `currency`, `weightGrams` and `options`, matching the existing grouping implementation. A price or currency change owns both together. Variant saves increment the parent editVersion so in-flight Gemini input becomes stale. Unchanged fields gain no ownership. Grouping already refuses merchant-edited drafts and preserves these markers on published baselines; this milestone does not implement publication.
+
+Approval recomputes missing/invalid values: title, safe nonempty description, supported category, positive prices, EUR/GBP/USD currency, option completeness/uniqueness, currency consistency, active identities and the published baseline. Price values cross JSON as integer strings; decimal input uses BigInt/string arithmetic. Zero-price approval, unsupported currency exponents, SKU renames and variant creation/deletion are not supported. Missing optional weight is allowed; provided weight is nonnegative integer grams. Approved/rejected revisions are read-only in the review service/API. Approval sets approvedAt and never writes publishedRevisionId or an existing published snapshot.
+
+Historical pipeline reviewReasons are not erased. Missing-value reasons are replaced by current value checks, while substantive source issues require explicit resolution with a reason and a cited cell from the same proposal/supplier. Resolution records include the relevant value fingerprint and become invalid when those values change. A citation is an auditable human decision, not automated semantic proof. Unsupported AI wording has no adoption shortcut; it can be discarded, and a discarded value cannot remain in the corresponding draft field. A supported category suggestion has a dedicated merchant-adoption action and gains manual ownership. Known English restriction blocks in frozen Gemini description facts containing `not`, `never`, `must`, `only`, `avoid`, `below`, `warning` or `do not` must remain intact. This conservative guard is not general semantic validation or multilingual restriction detection; unsupported novel merchant claims still require honest human review.
+
+### Retained real-provider browser example
+
+```bash
+bun run review:fixture
+# Substitute the IDs printed by that command; generation uses REAL Gemini.
+GEMINI_MODEL=gemini-3.5-flash-lite bun run enrich:one STORE_UUID REVISION_UUID
+# Review the isolated fixture store without changing the local environment file.
+DEV_STORE_ID=STORE_UUID bun run dev --port 3002
+# Cleanup only when finished reviewing that disposable store.
+bun run review:fixture --cleanup STORE_UUID
+```
+
+The fixture command retains three original rows, cleaner/grouping evidence and an unpublished proposal. It never simulates Gemini. Reopening a recorded run or browsing the UI makes no AI call. Quota pauses remain visible in the enrichment command; do not create repeated runs to bypass daily limits. The existing `enrich:one --demo` still removes its fixture; use the retained command for browser work.
+
+The browser check used one genuine Gemini 3.5 Flash-Lite call: 2,269 input / 368 output tokens, 5,117 ms recorded provider latency and 8,043 ms command service time under concurrent verification work, zero estimated Free-tier cost. Three exact supplier-backed fields were accepted; the inferred category was withheld at confidence 100. As in the earlier live check, the accepted text matched the existing supplier-backed draft; this is not a broad AI quality benchmark. In the browser, initial approval returned 422, then explicit category adoption and a **demonstration-only merchant price** of EUR 34.99 resolved the blockers. Saving advanced version 2→3; approval advanced 3→4. Refresh retained APPROVED/read-only state, both frost restrictions and a null published pointer. The original missing-price source cell stayed null. Layout checks used actual Chromium device-metric overrides at 375/768/1280 px: page scroll widths were 360/753/1265 px, with one/one/two editor columns and horizontally scrollable source tables. Keyboard navigation and keyboard approval were exercised.
+
+### Review verification and limits
+
+```bash
+bun --env-file=.env run node node_modules/vitest/vitest.mjs run packages/review/src/contracts.test.ts tests/review.integration.test.ts apps/web/src/features/review/review.test.tsx
+bun run test
+bun run test:integration
+bun run typecheck
+bun run lint
+bun run build
+```
+
+Run the complete integration suite against a disposable local **test database** with all migrations applied. Set DATABASE_URL for both `bun run db:deploy` and `bun run test:integration` through a process-scoped environment override. Never reset the merchant database or remove its live AI usage history for tests. Existing global Gemini quota tests assume no prior live attempts: two fail against a database containing the retained live call because its quota reservation correctly prevents their fake provider calls. The full suite passes in an isolated database on the same PostgreSQL service with shared Redis left intact. No assertion or production quota protection was weakened. Final complete verification passed 194 unit/component tests across nine files and 192 integration tests across ten files, plus TypeScript, ESLint, Prisma validation/migration status and the production build. The additive review migration applied to the existing database without reset; all eight migrations also applied successfully to the isolated test database.
+
+The editor caps each proposal at 1,000 variants/source links/review events and rejects larger proposals explicitly; variants render ten at a time, source rows ten at a time, and the latest fifty merchant events are displayed. At most ten completed enrichment runs are presented. Bulk approval, rebase/reopen/clone workflows, user identity/authentication, public deployment and publication remain deferred. Review history is append-only through the service; no claim is made that a privileged SQL administrator cannot modify it. Ordinary fixture cleanup remains supported. Unsaved-change protection covers refresh/close and the editor back link; it is not a universal router-navigation interception mechanism.
+
 ## Health and readiness
 
 With the web and worker running:

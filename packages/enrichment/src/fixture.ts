@@ -27,6 +27,7 @@ export async function createTerracottaFixture() {
 }
 export async function removeFixture(storeId: string) {
   const db = getDb(), where = { storeId };
+  await db.productReviewEvent.deleteMany({ where });
   await db.aIEnrichmentAttempt.deleteMany({ where }); await db.aIEnrichmentRun.deleteMany({ where });
   await db.groupingRowResult.deleteMany({ where }); await db.revisionSourceRow.deleteMany({ where });
   await db.variantRevision.deleteMany({ where }); await db.product.updateMany({ where, data: { publishedRevisionId: null } });

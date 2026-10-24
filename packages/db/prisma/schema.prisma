@@ -227,6 +227,7 @@ model ProductRevision {
   groupingResults         GroupingRowResult[]
 
   enrichmentRuns AIEnrichmentRun[]
+  reviewEvents ProductReviewEvent[]
 
   @@unique([id, groupingRunId, storeId])
   @@unique([id, productId, storeId])
@@ -356,4 +357,23 @@ model AIEnrichmentAttempt {
   finishedAt          DateTime? @db.Timestamptz(3)
   run                 AIEnrichmentRun @relation(fields: [runId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
   @@unique([runId, number])
+}
+
+// Merchant decisions are separate from immutable AI attempts and source issues.
+model ProductReviewEvent {
+  id String @id @default(uuid()) @db.Uuid
+  revisionId String @db.Uuid
+  storeId String @db.Uuid
+  requestId String @db.Uuid
+  requestHash String @db.VarChar(64)
+  action String
+  beforeVersion Int
+  afterVersion Int
+  changes Json
+  decisions Json
+  reason String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  revision ProductRevision @relation(fields: [revisionId, storeId], references: [id, storeId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([revisionId, requestId])
+  @@unique([revisionId, afterVersion])
 }

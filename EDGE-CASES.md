@@ -352,14 +352,14 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A merchant corrects a field before an older generation result is saved.
 - **Application should do:** Preserve field-level manual ownership and reject or flag stale automated changes rather than overwriting them.
 - **Why:** Merchant corrections take precedence regardless of job completion order.
-- **Implementation status:** Not handled end to end — enrichment locks/revalidates frozen input and editVersion, preserves manual fields/markers and rejects stale results; integration tests cover edits during generation and unchanged published snapshots. Merchant editing/review UI and future AI orchestration remain absent.
+- **Implementation status:** Handled and tested for explicit single-proposal review — merchant saves use exact product/variant ownership markers and advance editVersion; concurrent saves return 409 and in-flight enrichment becomes stale. UI tests retain local text on conflict and reuse the original request after an uncertain response. Published snapshots/pointers remain unchanged. No authentication, automatic orchestration or publication is claimed.
 - **Planned test:** Delay a generation response, save a merchant edit, then release the response; expect the edit retained and any conflict visible.
 
 ### EC-41 — Approval is stale or bulk approval includes invalid products
 - **What happens:** A merchant approves an old revision, or a bulk selection contains missing prices, unresolved claims, and valid products.
 - **Application should do:** Revalidate the exact approved revision and business gates transactionally; reject stale/invalid approvals and report per-product results under an explicit bulk policy.
 - **Why:** A green UI state is not authorization to publish changed or invalid data.
-- **Implementation status:** Not handled — approval validation and bulk semantics have not been implemented.
+- **Implementation status:** Handled and tested for individual approval — a transaction revalidates the saved version, required values, positive integer money/currency, options, source decisions and published baseline. Invalid approval returns 422 with actionable fields; stale edits return 409. Approval/rejection retries deduplicate by request ID, terminal revisions are read-only and approval never publishes. Bulk semantics remain unimplemented.
 - **Planned test:** Modify a proposal after selection and include blocked products; expect no bypass of validation and clear outcomes for each selected product.
 
 ### EC-42 — Supplier update arrives for a published product
@@ -433,7 +433,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** Sorting/filtering changes during pagination or bulk selection, or long evidence/variant data overflows a mobile screen.
 - **Application should do:** Use stable server-side ordering, explicit selection semantics, and accessible responsive layouts that keep issues and source links reachable.
 - **Why:** Reviewers must understand which products they are acting on and inspect evidence on supported devices.
-- **Implementation status:** Not handled — product tables and responsive review flows have not been implemented.
+- **Implementation status:** Handled and tested for the local review queue/editor — bounded pagination, title/SKU search, status filters, escaped positional source cells, expandable values, keyboard controls and actual 375/768/1280 px browser layouts are exercised. Unsaved edits survive stale-response errors; protected refresh/back navigation warns before discarding. Bulk actions and universal router interception remain absent.
 - **Planned test:** Exercise 10/25/50/100 page sizes, tied sort values, filter changes, bulk selections, and mobile widths; verify stable identity, actionable errors, and no runtime console warnings.
 
 ### EC-52 — Export corrupts data or executes spreadsheet formulas
@@ -510,3 +510,10 @@ Initially recorded during requirements and architecture planning. Most entries d
 - Exercise review, approval, source comparison, country switching, mobile views, exports, errors, and SSE reconnects manually against known fixtures.
 - Use k6 for storefront baseline/concurrent-import measurements and gradually exercise 100, 1,000, and 10,000 records. Agree pass/fail budgets before interpreting results.
 - Record actual commands, environment, observations, and evidence when tests are run. Change a case to Handled but not tested or Handled and tested only when the implementation and evidence justify that status.
+
+### EC-60 — Historical issues hide current review state or review retries duplicate actions
+- **What happens:** A merchant fixes a missing price but the old reason remains; an approval response is lost, or a previously resolved factual value changes.
+- **Application should do:** Recompute value blockers, retain original reasons and immutable Gemini audits, record explicit source-backed decisions separately, and bind resolution validity to the reviewed values. Replay the same request ID atomically; never publish as a side effect.
+- **Why:** Audit history is not a permanent blocker list. A human decision for one value must not silently authorize another value or duplicate a completed approval.
+- **Implementation status:** Handled and tested for local single-proposal review — ProductReviewEvent records action/request hash, before/after versions, field changes and decisions. Unique constraints and row locks protect replay/concurrency; integration tests cover rollback, changed-payload conflicts, missing-data repair, cited resolutions, invalidated resolutions, category adoption, published safety and read-only terminal revisions. The real browser completed the Terracotta repair and approval with genuine recorded Gemini evidence. Human citations are not semantic entailment proof; broader review/authentication/publication remains deferred.
+- **Test:** Run review unit/component/integration tests and the retained-fixture browser procedure in development notes. Use a disposable integration database so real project-wide quota history is not erased or confused with mocked provider tests.

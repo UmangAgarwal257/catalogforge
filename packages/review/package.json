@@ -1,0 +1,18 @@
+{
+  "name": "@catalogforge/review",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/service.ts",
+    "./contracts": "./src/contracts.ts",
+    "./http": "./src/http.ts",
+    "./validation": "./src/validation.ts"
+  },
+  "dependencies": {
+    "@catalogforge/db": "workspace:*",
+    "@catalogforge/enrichment": "workspace:*",
+    "@catalogforge/cleaning": "workspace:*",
+    "@catalogforge/ingestion": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}
