@@ -6,9 +6,9 @@ import { activeIssues, reviewIssues, hash, json, scopeHash } from "./validation"
 const db = getDb;
 type Tx = Prisma.TransactionClient;
 export async function loadReview(storeId: string, id: string, tx: Tx = db()) {
-  const revision = await tx.productRevision.findFirst({ where: { id, storeId }, include: { product: { include: { supplier: { select: { name: true } } } }, variants: { include: { variant: true }, orderBy: { variantId: "asc" }, take: 1001 } } });
+  const revision = await tx.productRevision.findFirst({ where: { id, storeId }, include: { publication: { select: { createdAt: true } }, product: { include: { supplier: { select: { name: true } } } }, variants: { include: { variant: true }, orderBy: { variantId: "asc" }, take: 1001 } } });
   if (!revision) throw new ReviewError("NOT_FOUND", 404, "Proposal not found.");
-  const sources = await tx.revisionSourceRow.findMany({ where: { productRevisionId: id, storeId }, include: { cleaningResult: true, sourceRow: { select: { rowNumber: true, sheetIndex: true, sheetName: true, import: { select: { supplierId: true } } } } }, take: 1001, orderBy: { sourceRowId: "asc" } });
+  const sources = await tx.revisionSourceRow.findMany({ where: { productRevisionId: id, storeId }, include: { cleaningResult: true, sourceRow: { select: { rowNumber: true, sheetIndex: true, sheetName: true, import: { select: { supplierId: true, status: true } } } } }, take: 1001, orderBy: { sourceRowId: "asc" } });
   if (sources.some(s => s.sourceRow.import.supplierId !== revision.product.supplierId)) throw new ReviewError("EVIDENCE_SUPPLIER", 422, "Source evidence belongs to another supplier and requires correction.");
   const runs = await tx.aIEnrichmentRun.findMany({ where: { revisionId: id, storeId, state: "COMPLETED" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 10 });
   const events = await tx.productReviewEvent.findMany({ where: { revisionId: id, storeId }, orderBy: { afterVersion: "asc" }, take: 1001 });
@@ -18,7 +18,8 @@ export async function loadReview(storeId: string, id: string, tx: Tx = db()) {
 export type ReviewSnapshot = Awaited<ReturnType<typeof loadReview>>;
 export async function reviewDetail(storeId: string, id: string) {
   const data = await loadReview(storeId, id);
-  return json({ revision: data.revision, blockers: activeIssues(data), taxonomy: (await import("./contracts")).CATEGORIES,
+  const publications = await getDb().productPublication.findMany({ where: { storeId, productId: data.revision.productId }, orderBy: { createdAt: "desc" }, take: 25 });
+  return json({ publications, revision: data.revision, blockers: activeIssues(data), taxonomy: (await import("./contracts")).CATEGORIES,
     history: data.events, enrichment: data.runs.map(r => ({ id: r.id, createdAt: r.createdAt, state: r.state, result: r.result,
       facts: ((r.inputSnapshot as unknown as { packet?: { facts?: Fact[] } }).packet?.facts ?? []).map(f => ({ ...f, evidence: f.evidence.map(e => { const source = data.sources.find(s => s.sourceRowId === e.sourceRowId)?.sourceRow; return { ...e, rowNumber: source?.rowNumber, sheetIndex: source?.sheetIndex, sheetName: source?.sheetName }; }) })) })) });
 }

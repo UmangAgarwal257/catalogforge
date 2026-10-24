@@ -10,7 +10,7 @@ let detail:ReviewDetail;
 const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status});
 const mock=vi.fn<(url:string,init?:RequestInit)=>Promise<Response>>();
 beforeEach(()=>{
- detail={revision:{id:revisionId,productId,title:"Terracotta Pot",descriptionHtml:"<p>Not frost-proof.</p>",categoryKey:null,tags:[],attributes:{colour:"terracota"},status:"NEEDS_REVIEW",editVersion:1,manualFieldPaths:[],reviewReasons:[{code:"PRICE_REQUIRED"}],product:{supplier:{name:"Pots supplier"},publishedRevisionId:null},variants:[{variantId,options:{diameter:"30"},priceMinor:null,currency:null,weightGrams:1800,manualFieldPaths:[],variant:{sku:"tc-pl-30"}}]},blockers:[{id:"a".repeat(64),field:"categoryKey",code:"WITHHELD_SUGGESTION",message:"Review category",kind:"SUGGESTION",evidenceRequired:false,value:"Home & Garden > Planters"}],taxonomy:["Home & Garden > Planters"],history:[],enrichment:[{id:"live-record",createdAt:"2026-10-24T00:00:00Z",state:"COMPLETED",facts:[],result:{accepted:[],applied:[],withheld:[{path:"categoryKey",value:"Home & Garden > Planters",confidence:100,origin:"INFERRED_SUGGESTION",factIds:[]}],issues:[{code:"UNVERIFIED_SUGGESTION",field:"categoryKey"}]}}]};
+ detail={publications:[],revision:{id:revisionId,productId,title:"Terracotta Pot",descriptionHtml:"<p>Not frost-proof.</p>",categoryKey:null,tags:[],attributes:{colour:"terracota"},status:"NEEDS_REVIEW",editVersion:1,manualFieldPaths:[],reviewReasons:[{code:"PRICE_REQUIRED"}],product:{supplier:{name:"Pots supplier"},publishedRevisionId:null},variants:[{variantId,options:{diameter:"30"},priceMinor:null,currency:null,weightGrams:1800,manualFieldPaths:[],variant:{sku:"tc-pl-30"}}]},blockers:[{id:"a".repeat(64),field:"categoryKey",code:"WITHHELD_SUGGESTION",message:"Review category",kind:"SUGGESTION",evidenceRequired:false,value:"Home & Garden > Planters"}],taxonomy:["Home & Garden > Planters"],history:[],enrichment:[{id:"live-record",createdAt:"2026-10-24T00:00:00Z",state:"COMPLETED",facts:[],result:{accepted:[],applied:[],withheld:[{path:"categoryKey",value:"Home & Garden > Planters",confidence:100,origin:"INFERRED_SUGGESTION",factIds:[]}],issues:[{code:"UNVERIFIED_SUGGESTION",field:"categoryKey"}]}}]};
  mock.mockImplementation(async(url,init)=>{
   if(url.includes("/evidence"))return json({rows:[{id:variantId,sheetIndex:0,sheetName:"Pots",rowNumber:15,status:"PENDING",rawCells:[{columnIndex:0,header:"Notes",value:"<script>attack()</script>"},{columnIndex:1,header:"Notes",value:"00123"}],issues:[],originalFilename:"pots.csv",cleaning:{evidence:[]}}],hasMore:false});
   if(init?.method){const body=JSON.parse(String(init.body));detail.revision={...detail.revision,...body.fields,editVersion:detail.revision.editVersion+1};return json({reused:false});}
@@ -63,4 +63,13 @@ it("saves 101+ variants as bounded pages and prevents losing unsaved edits durin
  for(let i=0;i<10;i++)await user.click(screen.getAllByRole("button",{name:"Next"})[0]!);
  await screen.findByLabelText("Price for SKU-100");await user.type(screen.getByLabelText("Price for SKU-100"),"19.99");await user.click(screen.getByRole("button",{name:"Save changes"}));await waitFor(()=>expect(mock.mock.calls.filter(([,i])=>i?.method==="PATCH")).toHaveLength(2));
  const bodies=mock.mock.calls.filter(([,i])=>i?.method==="PATCH").map(([,i])=>JSON.parse(String(i?.body)));expect(bodies.map(b=>b.variants.length)).toEqual([1,1]);expect(bodies.map(b=>b.expectedEditVersion)).toEqual([1,2]);expect(bodies.map(b=>b.variants[0].priceMinor)).toEqual(["1250","1999"]);
+});
+
+it("publishes an approved saved revision with a bounded idempotent request and shows the storefront link",async()=>{
+ detail.revision.status="APPROVED";detail.blockers=[];
+ mock.mockImplementation(async(url,init)=>{
+  if(init?.method){const payload=JSON.parse(String(init.body));expect(Object.keys(payload).sort()).toEqual(["expectedEditVersion","requestId"]);expect(payload.expectedEditVersion).toBe(1);detail.revision.product.publishedRevisionId=revisionId;return json({reused:false});}
+  if(url.includes("/evidence"))return json({rows:[],hasMore:false});return json(detail);
+ });
+ render(<ReviewEditor productId={productId} revisionId={revisionId}/>);const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Publish approved revision"}));expect(await screen.findByRole("link",{name:"View published product →"})).toBeTruthy();expect(screen.queryByRole("button",{name:"Save changes"})).toBeNull();
 });

@@ -6,7 +6,10 @@
     ".": "./src/service.ts",
     "./contracts": "./src/contracts.ts",
     "./http": "./src/http.ts",
-    "./validation": "./src/validation.ts"
+    "./validation": "./src/validation.ts",
+    "./publication": "./src/publication.ts",
+    "./catalog": "./src/catalog.ts",
+    "./export": "./src/export.ts"
   },
   "dependencies": {
     "@catalogforge/db": "workspace:*",

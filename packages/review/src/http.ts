@@ -1,9 +1,10 @@
+import { publishRevision } from "./publication";
 import { z } from "zod";
 import { developmentConfig, checkBrowserOrigin } from "@catalogforge/ingestion/http";
 import { IngestionError } from "@catalogforge/ingestion/contracts";
 import { ReviewError } from "./contracts";
 import { listReviews, reviewDetail, reviewEvidence, mutateReview } from "./service";
-export async function reviewEndpoint(request: Request, id?: string, resource?: "evidence" | "approve" | "reject") {
+export async function reviewEndpoint(request: Request, id?: string, resource?: "evidence" | "approve" | "reject" | "publish") {
   const headers = { "Cache-Control": "no-store" };
   try {
     const config = developmentConfig(); checkBrowserOrigin(request);
@@ -15,13 +16,13 @@ export async function reviewEndpoint(request: Request, id?: string, resource?: "
       if (resource && resource !== "evidence") return new Response(null, { status: 405, headers });
       return Response.json(id ? resource === "evidence" ? await reviewEvidence(config.DEV_STORE_ID,id,p.page,p.pageSize) : await reviewDetail(config.DEV_STORE_ID,id) : await listReviews(config.DEV_STORE_ID,p.page,p.pageSize,p.search,p.status), { headers });
     }
-    if (!id || (request.method !== "PATCH" || resource) && (request.method !== "POST" || !["approve", "reject"].includes(resource ?? ""))) return new Response(null,{status:405, headers});
+    if (!id || (request.method !== "PATCH" || resource) && (request.method !== "POST" || !["approve", "reject", "publish"].includes(resource ?? ""))) return new Response(null,{status:405, headers});
     if (!request.headers.get("content-type")?.startsWith("application/json") || !request.body) throw new ReviewError("INVALID_BODY",400,"Send a JSON request.");
     const reader=request.body.getReader(); let size=0; const chunks:Uint8Array[]=[];
     try { for (;;) { const {value,done}=await reader.read(); if(done) break; size+=value.length; if(size>128*1024) { await reader.cancel(); throw new ReviewError("BODY_TOO_LARGE",413,"Review request exceeds 128 KiB."); } chunks.push(value); } } finally { reader.releaseLock(); }
     let body:unknown;
     try { body=JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw new ReviewError("INVALID_JSON",400,"Request is not valid JSON."); }
-    const result=await mutateReview(config.DEV_STORE_ID,id,resource==="approve"?"APPROVE":resource==="reject"?"REJECT":"EDIT",body);
+    const result=resource==="publish"?await publishRevision(config.DEV_STORE_ID,id,body):await mutateReview(config.DEV_STORE_ID,id,resource==="approve"?"APPROVE":resource==="reject"?"REJECT":"EDIT",body);
     return Response.json(result,{headers});
   } catch(error) {
     if(error instanceof ReviewError) return Response.json({error:{code:error.code,message:error.message,issues:error.issues}},{status:error.status,headers});

@@ -125,7 +125,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** Descriptions contain scripts, event handlers, unsafe URLs, or malformed markup.
 - **Application should do:** Preserve raw source privately and sanitize content before AI input/display using an approved policy; validate generated HTML again before rendering.
 - **Why:** Cleaning once does not make future generated or edited HTML safe.
-- **Implementation status:** Not handled end to end — approved sanitize-html cleaning is unit-tested with a strict basic allowlist, preserved qualifications/paragraphs/lists, nonblocking script/handler removal warnings and review for potentially meaningful content loss. Discarded nonempty comments require `DESCRIPTION_COMMENT_REVIEW` without guessing significance; opening/closing paragraph and list boundaries cannot concatenate words in plain text. Unit and database tests cover negations, qualifiers, comment loss, retry identity and unchanged source evidence. Original cells remain immutable. AI input integration and generated/edited/storefront HTML validation are not implemented.
+- **Implementation status:** Not handled end to end — approved sanitize-html cleaning is unit-tested with a strict basic allowlist, preserved qualifications/paragraphs/lists, nonblocking script/handler removal warnings and review for potentially meaningful content loss. Discarded nonempty comments require `DESCRIPTION_COMMENT_REVIEW` without guessing significance; opening/closing paragraph and list boundaries cannot concatenate words in plain text. Unit and database tests cover negations, qualifiers, comment loss, retry identity and unchanged source evidence. Original cells remain immutable. AI/review validators and publication reject unsafe descriptions; storefront rendering sanitizes approved HTML again. General semantic preservation across arbitrary HTML remains unproven.
 - **Planned test:** Render adversarial HTML fixtures in source review and storefront views; expect no executable content while allowed formatting remains.
 
 ### EC-13 — Huge descriptions or extreme field sizes
@@ -366,7 +366,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A later file or AI rerun changes published text, prices, options, or images.
 - **Application should do:** Store a candidate revision for review and retain the existing published revision until merchant approval; publish each product consistently.
 - **Why:** Processing success does not authorize changing the storefront.
-- **Implementation status:** Handled and tested for deterministic grouping proposals — new revisions and complete variant snapshots are separate from the unchanged published pointer/snapshot, including partial imports and manual overrides. AI updates, storefront behavior and publication remain unimplemented.
+- **Implementation status:** Handled and tested for deterministic grouping proposals — new revisions and complete variant snapshots are separate from the unchanged published pointer/snapshot, including partial imports and manual overrides. A real browser successor import and publication now verify that draft edits/approval leave the storefront unchanged, and explicit publication switches to the new snapshot while retaining old content and merchant ownership.
 - **Planned test:** Reimport changed content and inspect product/collection pages before and after approval; expect no unapproved changes or mixed variant state.
 
 ### EC-43 — Deleted product returns in a supplier file
@@ -412,7 +412,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** A shopper guesses a draft handle or a collection query includes a product awaiting review.
 - **Application should do:** Enforce published visibility in all public queries, serve only the previous published version for pending updates, and keep merchant preview access separate.
 - **Why:** UI filtering alone cannot protect unapproved listings.
-- **Implementation status:** Not handled — publication visibility and preview boundaries have not been implemented.
+- **Implementation status:** Handled and tested for server-scoped public catalog/category/product queries requiring an explicit publication audit and current approved pointer. Draft/approval visibility, successor isolation and cross-store reads are integration-tested; actual browser approval stayed private until Publish. Production authentication and load isolation remain separate limitations.
 - **Planned test:** Request drafts directly and through collections/search; expect no unpublished content, with approved previous revisions still visible.
 
 ### EC-49 — Storefront slows during import
@@ -426,7 +426,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** Approval changes a handle, cache invalidation fails, or two products receive the same generated handle.
 - **Application should do:** Enforce scoped handle uniqueness, invalidate/revalidate public caches after committed publication, and prevent unapproved revision leakage. Redirect and freshness policies need agreement.
 - **Why:** A handle collision must not show the wrong product, and caches must respect approval boundaries.
-- **Implementation status:** Not handled — handle constraints and cache lifecycle have not been implemented.
+- **Implementation status:** Handled and tested for stable UUID product URLs and uncached dynamic reads of current published snapshots. No generated-title handle or invalidation queue is used. Browser successor publication and captured-export tests preserve old snapshots while switching current reads. SEO slugs, redirects and distributed cache invalidation are deferred.
 - **Planned test:** Generate colliding handles, interrupt invalidation, and publish an update; expect correct identity, no draft exposure, and freshness within the agreed bound.
 
 ### EC-51 — Table pagination or mobile review loses context
@@ -440,7 +440,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **What happens:** CSV contains formula-like supplier text, commas/newlines, leading-zero SKUs, or concurrent edits during export.
 - **Application should do:** Use explicit export scope and a consistent revision view, escape CSV correctly, defend formula-like cells, and retain integer money/currency semantics in JSON. Document safety transformations rather than silently losing values.
 - **Why:** Export is another untrusted rendering boundary and must not mix versions or alter identifiers unnoticed.
-- **Implementation status:** Not handled — CSV/JSON exports and export policies have not been implemented.
+- **Implementation status:** Handled and tested for bounded published CSV/JSON and conservative Shopify CSV exports. Snapshot capture, exact money strings, zero-prefixed SKUs, formula neutralization, variant flattening and store scope are tested. JSON is lossless; spreadsheet programs still need SKU columns imported as text. Shopify imports/destination defaults and production-scale throughput remain unverified.
 - **Planned test:** Export adversarial cells and multiline text while publishing changes; parse outputs and inspect spreadsheet behavior for consistency and safe handling.
 
 ## J. Costs and operational metrics
@@ -480,7 +480,7 @@ Initially recorded during requirements and architecture planning. Most entries d
 - Performance/recovery objectives remain open: latency percentiles, allowed error rate, recovery time, supported concurrent imports, and cache freshness. A fast storefront must be measured under import load, not asserted.
 - HTML sanitizer and ZIP-handling implementation/dependency choices require explanation and approval. Authentication, access control, key protection, and storage ownership must be settled before exposing merchant-write operations publicly; full multi-store support remains optional.
 - Remote image URL ingestion is not assumed; uploaded files are the required path. If remote fetching is added, URL/network access controls, redirect checks, timeouts, and content limits need explicit cases and tests.
-- Cancellation, provider switching, public APIs, completion webhooks, Shopify exports, SEO fields, prompt A/B testing, and full evaluation tooling are not authorized implementation scope. A small labelled correctness fixture remains a recommended validation technique.
+- Cancellation, provider switching, general public APIs, completion webhooks, SEO fields, prompt A/B testing, and full evaluation tooling remain deferred. Published Shopify CSV export is implemented with the documented currency/option limitations. A small labelled correctness fixture remains a recommended validation technique.
 - Scaling to 1,000,000 products and eight languages is a technical write-up topic, not a demonstrated capacity. Connection budgets, translation volume, indexing, caching, storage lifecycle, and cost would need fresh measurements and design review.
 - This document must become the first Git commit before application code, only after explicit commit approval. It is intentionally not staged or committed by Milestone 0 document creation.
 
@@ -581,3 +581,25 @@ Initially recorded during requirements and architecture planning. Most entries d
 - **Why:** A terminal coordinator state is not a quality, approval or publication guarantee.
 - **Implementation status:** Handled and tested through actual service outcomes for four proposals (one successful, one failed, one stale, one blocked; all four require review), plus dashboard component assertions. No new live Gemini performance claim is made.
 - **Test:** Pipeline integration tests and dashboard component tests; compare reported counts with persisted run/revision states.
+
+
+### EC-70 — Approval is confused with publication, or an invalid revision is published
+- **What happens:** An approved/rejected/stale/incomplete proposal is submitted publicly or a publish response is lost.
+- **Application should do:** Require a separate scoped Publish action, lock product/revision, check approval/version/baseline/source/fields/variants and atomically audit the request plus change only the correct product pointer. Replays return the original event without reversing later publication.
+- **Why:** Merchant approval and public visibility are distinct decisions; an uncertain response cannot justify duplicate publication or an unintended rollback.
+- **Implementation status:** Handled and tested for local merchant publication, duplicate/concurrent requests, changed payloads, invalid/rejected revisions, stale baselines, source ingestion failures and cross-store/origin/production denial. Browser approval left visibility null; explicit publication made uploaded products visible. Human-attested semantic correctness remains a documented limitation.
+- **Test:** Publication integration suite and the real upload/review/approve/publish browser flow. Inspect audit counts, exact pointers, versions and retained source evidence.
+
+### EC-71 — A published snapshot or its source provenance changes later
+- **What happens:** A writer edits old variants, moves evidence into/out of a published revision, changes SKU identity or changes a referenced cleaning interpretation.
+- **Application should do:** Reject published snapshot/evidence mutations in PostgreSQL; preserve historical content after a successor publishes. Keep draft/grouping/enrichment changes on separate revisions.
+- **Why:** A stable pointer is insufficient if the data behind it can change.
+- **Implementation status:** Handled and tested for revision/variant/evidence immutability, evidence moves, cleaning provenance and SKU identity. An initial new trigger missed moves out of a published revision; the regression demonstrated this and a second additive migration closes it without rewriting the already-applied migration. Browser successor publication retained the prior snapshot and manual variant ownership. Privileged database administrators can still deliberately erase data; normal application routes expose no audit deletion.
+- **Test:** Publication integration tests exercise actual PostgreSQL rejection and captured export consistency while a successor changes the product pointer.
+
+### EC-72 — Storefront exposes drafts, unsupported availability or another store
+- **What happens:** A shopper requests an unpublished product, stale draft content, arbitrary store ID or unknown category.
+- **Application should do:** Read only the configured server store's current approved publication; sanitize HTML and show no inferred stock. Keep draft/provider/source metadata private and never call AI on the shopper path.
+- **Why:** Import/review work must not leak into a live catalog.
+- **Implementation status:** Handled and tested for scoped published reads, missing product/category views, draft isolation and exact variant display. Actual browser collection/product layouts were checked at 375/768/1280 pixels. Dynamic uncached PostgreSQL queries prevent draft-cache exposure. Next.js streaming can return HTTP 200 for a not-found view; status alone is not visibility evidence. Storefront load under concurrent large imports, translations and production deployment are not established.
+- **Test:** Public-query integration checks, variant component tests and real browser comparison before/after publication. Verify current variant prices and preserved restrictions rather than relying only on HTTP status.

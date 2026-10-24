@@ -229,6 +229,7 @@ model ProductRevision {
 
   enrichmentRuns AIEnrichmentRun[]
   reviewEvents ProductReviewEvent[]
+  publication ProductPublication?
 
   @@unique([id, groupingRunId, storeId])
   @@unique([id, productId, storeId])
@@ -397,4 +398,21 @@ model CatalogTask {
   import Import @relation(fields:[importId,storeId],references:[id,storeId],onDelete:Cascade,onUpdate:Restrict)
   @@unique([importId,storeId])
   @@index([storeId,state,nextAttemptAt])
+}
+
+// Publication audit binds an immutable approved snapshot to a product.
+model ProductPublication {
+  id                 String @id @default(uuid()) @db.Uuid
+  productId          String @db.Uuid
+  revisionId         String @unique @db.Uuid
+  storeId            String @db.Uuid
+  requestId          String @db.Uuid
+  requestHash        String @db.VarChar(64)
+  expectedEditVersion Int
+  previousRevisionId String? @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  revision ProductRevision @relation(fields: [revisionId, productId, storeId], references: [id, productId, storeId], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([storeId, requestId])
+  @@unique([revisionId, productId, storeId])
+  @@index([storeId, productId])
 }

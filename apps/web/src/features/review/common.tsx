@@ -4,7 +4,7 @@ import { useEffect,useState } from "react";
 import { z } from "zod";
 export const control="min-h-11 w-full rounded-lg border bg-background px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60";
 export const panel="rounded-xl border bg-background p-5 shadow-sm";
-export function ReviewShell({children}:{children:React.ReactNode}) { return <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-10"><nav aria-label="Catalog navigation" className="flex items-center gap-6 border-b pb-4"><Link href="/" className="font-semibold tracking-tight">CatalogForge</Link><Link href="/" className="text-sm underline underline-offset-4">Supplier imports</Link><Link href="/products" className="text-sm underline underline-offset-4">Product review</Link></nav>{children}</main>; }
+export function ReviewShell({children}:{children:React.ReactNode}) { return <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-10"><nav aria-label="Catalog navigation" className="flex flex-wrap items-center gap-6 border-b pb-4"><Link href="/" className="font-semibold tracking-tight">CatalogForge</Link><Link href="/" className="text-sm underline underline-offset-4">Supplier imports</Link><Link href="/products" className="text-sm underline underline-offset-4">Product review</Link><Link href="/shop" className="text-sm underline underline-offset-4">Storefront</Link></nav>{children}</main>; }
 export class ApiFailure extends Error { constructor(message:string,public status:number){super(message);} }
 export async function request<T>(url:string,schema:z.ZodType<T>,init?:RequestInit):Promise<T> {
  const response=await fetch(url,{...init,cache:"no-store"}); let body:unknown;

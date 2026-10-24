@@ -13,12 +13,13 @@ Supplier files often contain inconsistent prices, repeated rows, incomplete vari
 - An independent worker with durable PostgreSQL dispatch, BullMQ retries, and restart-safe source-row persistence.
 - Supplier/source and product/revision database models with scoped relationships, canonical SKU uniqueness, protected original rows, and separate catalog snapshots.
 - Automatic cleaning, conservative grouping and real Gemini enrichment for two configured supplier profiles, with source evidence, durable checkpoints, free-tier quota pauses and protected drafts.
-- A local merchant review queue and editor with source evidence, variant corrections, audited decisions and approval without publication.
+- A local merchant review queue and editor with source evidence, variant corrections, audited decisions and separate approval/publication actions.
+- A public catalog, category browsing and variant-aware product pages backed only by published snapshots, plus published CSV/JSON and conservative Shopify CSV exports.
 - Shared TypeScript packages, configuration validation, and local development checks.
 
 **Planned workflow**
 
-Upload CSV/XLSX and photos → clean and group rows into products/variants → generate descriptions with supplier evidence and field confidence → translate into German/French → merchant review → publish to a storefront → export CSV/JSON.
+Upload CSV/XLSX and photos → clean and group rows into products/variants → generate descriptions with supplier evidence and field confidence → translate into German/French → merchant review → separate publication → storefront and CSV/JSON/Shopify export. Photos and German/French translation remain planned.
 
 The planned catalog pipeline will flag missing or conflicting data for review rather than guess. Spreadsheet ingestion accepts files up to 10 MiB and 10,000 nonblank source records. Photo processing remains planned; no end-to-end throughput target has been demonstrated.
 
@@ -52,12 +53,12 @@ flowchart LR
     Worker -->|Schedule and consume| Redis[(Redis / BullMQ)]
     Worker --> AI[Gemini API: Free tier required]
     Worker -. Planned translation .-> AI
-    Storefront[Storefront: planned Next.js routes] -. Published catalog reads .-> DB
+    Storefront[Public storefront] -->|Published snapshot reads| DB
 ```
 
-Solid connections represent implemented ingestion and catalog-processing services; dashed connections represent planned catalog processing. Web and worker share the same private local storage directory.
+Solid connections represent implemented services; the dashed translation connection is planned. Web and worker share the same private local storage directory.
 
-PostgreSQL holds business state; Redis delivers asynchronous work. The planned storefront will read approved catalog data and precomputed translations, without calling AI or waiting for imports.
+PostgreSQL holds business state; Redis delivers asynchronous work. The storefront reads explicitly published snapshots without calling AI or waiting for imports. Translations remain planned.
 
 Code is organized under [apps/web](./apps/web), [apps/worker](./apps/worker), [packages/db](./packages/db), [packages/shared](./packages/shared), and [packages/ingestion](./packages/ingestion). Operational details are in the [development guide](./docs/DEVELOPMENT.md).
 
@@ -83,7 +84,7 @@ In a separate terminal:
 bun run dev:worker
 ```
 
-Open [localhost:3000](http://localhost:3000) for the supplier-import dashboard. Stop applications with Ctrl+C; use `bun run infra:down` to stop local services while retaining their data. See the [development guide](./docs/DEVELOPMENT.md) for environment settings, migrations, and troubleshooting.
+Open [localhost:3000](http://localhost:3000) for the supplier-import dashboard, [product review](http://localhost:3000/products) to approve/publish, and [the storefront](http://localhost:3000/shop) to browse published products. Set `STOREFRONT_STORE_ID` server-side for production reads; local development falls back to `DEV_STORE_ID`. Stop applications with Ctrl+C; use `bun run infra:down` to stop local services while retaining their data. See the [development guide](./docs/DEVELOPMENT.md) for environment settings, migrations, and troubleshooting.
 
 To try ingestion, follow the [local upload setup and curl example](./docs/DEVELOPMENT.md#local-spreadsheet-ingestion). It requires explicit opt-in and a development store. Create suppliers in the browser and choose the mapping profile matching the file. These unauthenticated APIs are disabled in production and on Vercel.
 
@@ -107,10 +108,10 @@ Database constraints reject cross-store supplier/import references, duplicate re
 
 Import registration and parse dispatch are committed together. Parsing validates the whole file before writing rows, checks the original hash, and uses fenced attempts and coordinate uniqueness for safe retries. Import metadata and original source cells are protected against updates. Parsed rows initially remain `PENDING`; import `COMPLETED` means parsing finished. Separate catalog counters show cleaning, grouping, enrichment and row review outcomes.
 
-Grouping uses frozen cleaning selections and idempotent catalog writes. Enrichment validates exact source facts independently of model confidence, withholds unverified suggestions, preserves manual fields and rejects stale draft updates. Merchant edits and individual approval are audited; publication remains planned.
+Grouping uses frozen cleaning selections and idempotent catalog writes. Enrichment validates exact source facts independently of model confidence, withholds unverified suggestions, preserves manual fields and rejects stale draft updates. Merchant edits and individual approval are audited; publication revalidates an approved revision transactionally and freezes its snapshot and evidence.
 
 [EDGE-CASES.md](./EDGE-CASES.md) records expected failure behavior, implementation status, and planned verification.
 
 ## Current Limitations
 
-The dashboard and ingestion APIs are restricted to local development. Only the two documented supplier formats are mapped automatically; mismatched headers require a corrected upload. Free-tier quota can delay generation, and large evidence packets remain blocked for manual review. Real enrichment requires a valid Gemini key and billing disabled on its owning project; there is no production test-stub or paid-provider fallback. Photo processing, translation, publication, storefront pages, exports and cost dashboards remain unimplemented. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.
+The dashboard and ingestion APIs are restricted to local development. Only the two documented supplier formats are mapped automatically; mismatched headers require a corrected upload. Free-tier quota can delay generation, and large evidence packets remain blocked for manual review. Real enrichment requires a valid Gemini key and billing disabled on its owning project; there is no production test-stub or paid-provider fallback. Photo processing, translation, checkout/inventory and cost dashboards remain unimplemented. Public storefront reads require a server-configured store; merchant writes and exports remain development-only. Shopify export requires a matching destination currency and consistent sets of at most three option names; it imports as draft and omits inventory/media/tax settings. Public deployment requires authentication or scoped demo access, request/resource quotas, and shared private storage. No production throughput, storefront-load, accuracy, or cost benchmarks are available.
