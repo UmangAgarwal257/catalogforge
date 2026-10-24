@@ -23,7 +23,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "bun --env-file=.env run test:integration:run",
-    "test:integration:run": "vitest run .integration.test.ts",
+    "test:integration:run": "vitest run .integration.test.ts --no-file-parallelism",
     "db:seed:dev": "bun --env-file=.env run packages/db/src/seed-dev.ts",
     "enrich:one": "bun --env-file=.env run apps/worker/src/enrich-one.ts",
     "review:fixture": "bun --env-file=.env run apps/worker/src/review-fixture.ts"

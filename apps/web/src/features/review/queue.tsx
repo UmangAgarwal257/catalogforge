@@ -5,8 +5,8 @@ import { ExportLinks } from "./export-links";
 import { queueWire } from "@catalogforge/review/contracts";
 import { ReviewShell,control,panel,useReviewQuery,Pager } from "./common";
 
-export function ReviewQueue(){
- const [page,setPage]=useState(1),[size,setSize]=useState(25),[search,setSearch]=useState(""),[query,setQuery]=useState(""),[status,setStatus]=useState("OPEN"),[retry,setRetry]=useState(0);
+export function ReviewQueue({initialStatus="OPEN"}:{initialStatus?:string}={}){
+ const [page,setPage]=useState(1),[size,setSize]=useState(25),[search,setSearch]=useState(""),[query,setQuery]=useState(""),[status,setStatus]=useState(initialStatus),[retry,setRetry]=useState(0);
  useEffect(()=>{const timer=setTimeout(()=>{setQuery(search);setPage(1);},300);return()=>clearTimeout(timer);},[search]);
  const {data,error}=useReviewQuery(`/api/product-revisions?page=${page}&pageSize=${size}&search=${encodeURIComponent(query)}&status=${status}`,queueWire,retry);
  return <ReviewShell><header><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Merchant workspace</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Product review</h1><p className="mt-2 max-w-2xl text-muted-foreground">Check supplier evidence, resolve missing information and approve a draft. Approval does not publish a product.</p></header><ExportLinks/><section className={`${panel} space-y-5`}>

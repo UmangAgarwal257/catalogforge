@@ -6,11 +6,11 @@ import { ReviewEditor } from "./editor";
 import { ReviewQueue } from "./queue";
 import type { ReviewDetail } from "@catalogforge/review/contracts";
 const revisionId="00000000-0000-4000-8000-000000000001",productId="00000000-0000-4000-8000-000000000002",variantId="00000000-0000-4000-8000-000000000003";
-vi.mock("next/navigation",()=>({useRouter:()=>({push:vi.fn()})}));
+vi.mock("next/navigation",()=>({useRouter:()=>({push:vi.fn()}),usePathname:()=>window.location.pathname,useSearchParams:()=>new URLSearchParams(window.location.search)}));
 let detail:ReviewDetail;
 const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status});
 const mock=vi.fn<(url:string,init?:RequestInit)=>Promise<Response>>();
-beforeEach(()=>{
+beforeEach(()=>{window.history.replaceState(null,"","/");
  detail={publications:[],revision:{id:revisionId,productId,title:"Terracotta Pot",descriptionHtml:"<p>Not frost-proof.</p>",categoryKey:null,tags:[],attributes:{colour:"terracota"},status:"NEEDS_REVIEW",editVersion:1,manualFieldPaths:[],reviewReasons:[{code:"PRICE_REQUIRED"}],product:{supplier:{name:"Pots supplier"},publishedRevisionId:null},variants:[{variantId,options:{diameter:"30"},priceMinor:null,currency:null,weightGrams:1800,manualFieldPaths:[],variant:{sku:"tc-pl-30"}}]},blockers:[{id:"a".repeat(64),field:"categoryKey",code:"WITHHELD_SUGGESTION",message:"Review category",kind:"SUGGESTION",evidenceRequired:false,value:"Home & Garden > Planters"}],taxonomy:["Home & Garden > Planters"],history:[],enrichment:[{id:"live-record",createdAt:"2026-10-24T00:00:00Z",state:"COMPLETED",facts:[],result:{accepted:[],applied:[],withheld:[{path:"categoryKey",value:"Home & Garden > Planters",confidence:100,origin:"INFERRED_SUGGESTION",factIds:[]}],issues:[{code:"UNVERIFIED_SUGGESTION",field:"categoryKey"}]}}]};
  mock.mockImplementation(async(url,init)=>{
   if(url.startsWith("/api/media")||url.endsWith("/media")||url.endsWith("/translations"))return json({items:[],hasMore:false});
@@ -75,4 +75,14 @@ it("publishes an approved saved revision with a bounded idempotent request and s
   if(url.includes("/evidence"))return json({rows:[],hasMore:false});return json(detail);
  });
  render(<ReviewEditor productId={productId} revisionId={revisionId}/>);const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Publish approved revision"}));expect(await screen.findByRole("link",{name:"View published product →"})).toBeTruthy();expect(screen.queryByRole("button",{name:"Save changes"})).toBeNull();
+});
+it("keeps unsaved English edits across URL-addressable tabs and guards sidebar navigation",async()=>{
+ const confirm=vi.spyOn(window,"confirm").mockReturnValue(false),user=userEvent.setup();render(<ReviewEditor productId={productId} revisionId={revisionId}/>);const title=await screen.findByLabelText("Title");await user.clear(title);await user.type(title,"Unsaved across tabs");
+ await user.click(screen.getByRole("button",{name:"variants"}));expect(window.location.search).toContain("tab=variants");expect((title as HTMLInputElement).value).toBe("Unsaved across tabs");expect(screen.getByRole("button",{name:"Save changes"})).toBeTruthy();
+ await user.click(screen.getByRole("button",{name:"media"}));expect(window.location.search).toContain("tab=media");expect(screen.getByText("Product photos")).toBeTruthy();
+ await user.click(screen.getByRole("link",{name:"Dashboard"}));expect(confirm).toHaveBeenCalled();expect(window.location.pathname).toBe("/");
+ await user.click(screen.getByRole("button",{name:"overview"}));expect((title as HTMLInputElement).value).toBe("Unsaved across tabs");await user.click(screen.getByRole("button",{name:"Save changes"}));await screen.findByText("Changes saved. Approval blockers have been refreshed.");expect(JSON.parse(String(mock.mock.calls.find(([,init])=>init?.method==="PATCH")![1]?.body)).fields.title).toBe("Unsaved across tabs");
+});
+it("honors a translation deep link while preserving the same mounted editor",async()=>{
+ window.history.replaceState(null,"","/?tab=translations");render(<ReviewEditor productId={productId} revisionId={revisionId}/>);await screen.findByText("German & French translations");expect(screen.getByRole("button",{name:"translations"}).getAttribute("aria-current")).toBe("page");
 });

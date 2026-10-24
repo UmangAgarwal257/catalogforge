@@ -10,6 +10,7 @@ import { SUPPLIER_PROFILES } from "@catalogforge/shared/catalog";
 import { Button } from "../../components/ui/button";
 import { publicErrors, readResponse, useResource } from "./use-resource";
 import { SourcePreview } from "./source-preview";
+import { CatalogNav,useNavigationGuard } from "../review/common";
 
 const active = (item: ImportSummary) => item.status === "PENDING" || item.status === "PROCESSING" || !!item.catalogTask && ["PENDING","RUNNING","WAITING"].includes(item.catalogTask.state);
 const pollHistory = (data: { imports: ImportSummary[] }) => data.imports.some(active);
@@ -40,7 +41,7 @@ function Pagination({ label, page, hasMore, busy, change }: { label: string; pag
   </nav>;
 }
 
-export function ImportDashboard() {
+export function ImportDashboard({initialImportId}:{initialImportId?:string}={}) {
   const [profileId,setProfileId]=useState(SUPPLIER_PROFILES[0]!.id);
   const [supplierName,setSupplierName]=useState("");
   const [supplierSaving,setSupplierSaving]=useState(false);
@@ -54,7 +55,8 @@ export function ImportDashboard() {
   const [acceptedId, setAcceptedId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selection,setSelection]=useState({initialImportId,id:initialImportId??null});
+  const selectedId=selection.initialImportId===initialImportId?selection.id:initialImportId??null;
   const [rowPage, setRowPage] = useState(1);
   const [rowSize, setRowSize] = useState(10);
   const [version, setVersion] = useState(0);
@@ -74,7 +76,7 @@ export function ImportDashboard() {
   useEffect(() => { if (detail.data && focusSource.current) { focusSource.current = false; sourceHeading.current?.focus(); } }, [detail.data]);
   useEffect(() => { if (history.data && focusHistory.current) { focusHistory.current = false; historyHeading.current?.focus(); } }, [history.data]);
 
-  function selectImport(id: string) { focusSource.current = true; setSelectedId(id); setRowPage(1); }
+  function selectImport(id: string) { focusSource.current = true; setSelection({initialImportId,id}); setRowPage(1);const url=new URL(window.location.href);url.searchParams.set("import",id);url.hash="source-preview";window.history.replaceState(null,"",url); }
   function resetAttempt() { attempt.current = null; setAcceptedId(null); setUploadError(null); }
   function selectFile(files: File[]) {
     if (uploading) return;
@@ -100,14 +102,22 @@ export function ImportDashboard() {
       if (mounted.current) setUploadError(error instanceof Error && Object.values(publicErrors).includes(error.message) ? error.message : "Upload could not be confirmed. It may already have been accepted. Retry this upload to reuse its request key.");
     } finally { clearTimeout(timeout); inFlight.current = false; if (mounted.current) setUploading(false); }
   }
+  useNavigationGuard(uploading||!!uploadError);
   const imported = detail.data?.imported;
   const selectedSupplierOnPage = suppliers.data?.suppliers.some((item) => item.id === supplier?.id);
-  return <main className="mx-auto w-full max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
-    <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-6"><div><p className="mb-2 text-sm font-semibold tracking-wide">CatalogForge</p><h1 className="text-3xl font-semibold tracking-tight">Supplier imports</h1><p className="mt-2 max-w-prose text-sm text-muted-foreground">Preserve supplier spreadsheets and inspect their original records.</p></div><span className="rounded-md border bg-muted px-3 py-2 text-xs font-medium">Local development only</span></header>
+  const activeImports = history.data?.imports.filter(active).length ?? 0;
+  const completedImports = history.data?.imports.filter((item) => item.status === "COMPLETED").length ?? 0;
+  return <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-10"><div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]"><CatalogNav /><div className="min-w-0 space-y-8">
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><p className="mb-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">Merchant workspace</p><h1 className="text-3xl font-semibold tracking-tight">Supplier imports</h1><p className="mt-2 max-w-prose text-sm text-muted-foreground">Bring in a supplier catalog, preserve its source records and move products through review.</p></div><span className="rounded-md border bg-muted px-3 py-2 text-xs font-medium">Local development only</span></header>
+    <section aria-label="Current history page" className="grid gap-3 sm:grid-cols-3">
+      <Link href="#import-history" className="rounded-xl border bg-background p-4 shadow-sm transition hover:border-primary"><p className="text-sm text-muted-foreground">Imports in view</p><p className="mt-1 text-2xl font-semibold">{history.data?.imports.length ?? "—"}</p><p className="mt-1 text-xs text-muted-foreground">Open history to inspect each run</p></Link>
+      <Link href="#import-history" className="rounded-xl border bg-background p-4 shadow-sm transition hover:border-primary"><p className="text-sm text-muted-foreground">Unsettled on this page</p><p className="mt-1 text-2xl font-semibold">{history.data ? activeImports : "—"}</p><p className="mt-1 text-xs text-muted-foreground">Includes work waiting for capacity</p></Link>
+      <Link href="/products" className="rounded-xl border bg-background p-4 shadow-sm transition hover:border-primary"><p className="text-sm text-muted-foreground">Parsed on this page</p><p className="mt-1 text-2xl font-semibold">{history.data ? completedImports : "—"}</p><p className="mt-1 text-xs text-muted-foreground">Parsing finished; catalog work may still be waiting</p></Link>
+    </section>
     <div className="rounded-lg border bg-muted/40 p-4 text-sm"><strong>Parsing and catalog processing.</strong> COMPLETED means spreadsheet ingestion finished. Profiled uploads continue through cleaning, grouping and Gemini enrichment when free-tier quota permits. Review and approval never publish automatically.</div>
     {!online && <p role="status" className="rounded-lg border p-4 text-sm">You’re offline. Updates resume when connected. Retry an unconfirmed upload with the same attempt; avoid starting a new import.</p>}
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-      <section className="min-w-0 rounded-lg border p-5 sm:p-6" aria-labelledby="upload-heading">
+      <section className="min-w-0 rounded-xl border bg-background p-5 shadow-sm sm:p-6" aria-labelledby="upload-heading">
         <h2 id="upload-heading" className="text-lg font-semibold">Upload a spreadsheet</h2><p className="mt-1 text-sm text-muted-foreground">One CSV or XLSX, up to 10 MiB and 10,000 source records.</p>
         <form onSubmit={submit} className="mt-6 space-y-5" aria-busy={uploading}>
           <div><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><label htmlFor="supplier" className="block text-sm font-medium">Supplier (required)</label><Button type="button" variant="outline" onClick={suppliers.refresh} disabled={uploading}>Refresh suppliers</Button></div>
@@ -136,7 +146,7 @@ export function ImportDashboard() {
           {uploadError && <p className="text-xs text-muted-foreground">Retry keeps this attempt’s key. “Start new import” creates a new request; the previous one may already exist.</p>}
         </form>
       </section>
-      <section className="min-w-0 rounded-lg border p-5 sm:p-6" aria-labelledby="history-heading">
+      <section id="import-history" className="min-w-0 rounded-xl border bg-background p-5 shadow-sm sm:p-6" aria-labelledby="history-heading">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="history-heading" ref={historyHeading} tabIndex={-1} className="text-lg font-semibold focus-visible:outline-2 focus-visible:outline-ring">Import history</h2><Button variant="outline" onClick={history.refresh}>Refresh history</Button></div>
         <p className="mt-2 text-sm text-muted-foreground">Parsing status and durable catalog-processing status are separate.</p>
         {history.loading && <Loading label="Loading import history…" />}{history.error && <div className="mt-4"><Notice retry={history.refresh}>{history.error}</Notice></div>}
@@ -148,7 +158,7 @@ export function ImportDashboard() {
         </li>)}</ul>}<Pagination label="history" page={historyPage} hasMore={history.data.hasMore} busy={history.loading} change={(page) => { focusHistory.current = true; setHistoryPage(page); }} /></>}
       </section>
     </div>
-    <section className="min-w-0 rounded-lg border p-5 sm:p-6" aria-labelledby="source-heading">
+    <section id="source-preview" className="min-w-0 scroll-mt-4 rounded-xl border bg-background p-5 shadow-sm sm:p-6" aria-labelledby="source-heading">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="source-heading" ref={sourceHeading} tabIndex={-1} className="text-lg font-semibold focus-visible:outline-2 focus-visible:outline-ring">Original source rows</h2>{selectedId && <Button variant="outline" onClick={detail.refresh}>Refresh source rows</Button>}</div>
       {!selectedId && <p className="py-8 text-sm text-muted-foreground">Select an import to inspect its original cells and sheet coordinates.</p>}
       {detail.loading && <Loading label="Loading original source rows…" />}{detail.error && <div className="mt-4"><Notice retry={detail.refresh}>{detail.error}</Notice></div>}
@@ -163,5 +173,5 @@ export function ImportDashboard() {
       </div>}
     </section>
     <footer className="border-t pt-4 text-xs text-muted-foreground">Unauthenticated local development interface. Keep it on localhost; public deployment requires access controls and shared private storage.</footer>
-  </main>;
+  </div></div></main>;
 }

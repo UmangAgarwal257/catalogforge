@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+vi.mock("next/navigation",()=>({usePathname:()=>"/"}));
 import { ImportDashboard } from "./dashboard";
 import { SourcePreview } from "./source-preview";
 import { useResource } from "./use-resource";
