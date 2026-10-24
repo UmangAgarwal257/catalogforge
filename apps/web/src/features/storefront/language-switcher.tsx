@@ -1,0 +1,3 @@
+"use client";
+import {usePathname,useSearchParams,useRouter} from "next/navigation";
+export function LanguageSwitcher(){const path=usePathname(),params=useSearchParams(),router=useRouter(),locale=params.get("lang")??"en";return <label className="text-sm">Language<select aria-label="Storefront language" className="ml-2 min-h-11 rounded-lg border bg-background px-2 focus-visible:outline-2 focus-visible:outline-ring" value={["de","fr"].includes(locale)?locale:"en"} onChange={e=>{const q=new URLSearchParams(params);q.set("lang",e.target.value);router.push(`${path}?${q}`);}}><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option></select></label>;}

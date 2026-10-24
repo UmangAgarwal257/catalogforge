@@ -6,12 +6,14 @@ import { ReviewEditor } from "./editor";
 import { ReviewQueue } from "./queue";
 import type { ReviewDetail } from "@catalogforge/review/contracts";
 const revisionId="00000000-0000-4000-8000-000000000001",productId="00000000-0000-4000-8000-000000000002",variantId="00000000-0000-4000-8000-000000000003";
+vi.mock("next/navigation",()=>({useRouter:()=>({push:vi.fn()})}));
 let detail:ReviewDetail;
 const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status});
 const mock=vi.fn<(url:string,init?:RequestInit)=>Promise<Response>>();
 beforeEach(()=>{
  detail={publications:[],revision:{id:revisionId,productId,title:"Terracotta Pot",descriptionHtml:"<p>Not frost-proof.</p>",categoryKey:null,tags:[],attributes:{colour:"terracota"},status:"NEEDS_REVIEW",editVersion:1,manualFieldPaths:[],reviewReasons:[{code:"PRICE_REQUIRED"}],product:{supplier:{name:"Pots supplier"},publishedRevisionId:null},variants:[{variantId,options:{diameter:"30"},priceMinor:null,currency:null,weightGrams:1800,manualFieldPaths:[],variant:{sku:"tc-pl-30"}}]},blockers:[{id:"a".repeat(64),field:"categoryKey",code:"WITHHELD_SUGGESTION",message:"Review category",kind:"SUGGESTION",evidenceRequired:false,value:"Home & Garden > Planters"}],taxonomy:["Home & Garden > Planters"],history:[],enrichment:[{id:"live-record",createdAt:"2026-10-24T00:00:00Z",state:"COMPLETED",facts:[],result:{accepted:[],applied:[],withheld:[{path:"categoryKey",value:"Home & Garden > Planters",confidence:100,origin:"INFERRED_SUGGESTION",factIds:[]}],issues:[{code:"UNVERIFIED_SUGGESTION",field:"categoryKey"}]}}]};
  mock.mockImplementation(async(url,init)=>{
+  if(url.startsWith("/api/media")||url.endsWith("/media")||url.endsWith("/translations"))return json({items:[],hasMore:false});
   if(url.includes("/evidence"))return json({rows:[{id:variantId,sheetIndex:0,sheetName:"Pots",rowNumber:15,status:"PENDING",rawCells:[{columnIndex:0,header:"Notes",value:"<script>attack()</script>"},{columnIndex:1,header:"Notes",value:"00123"}],issues:[],originalFilename:"pots.csv",cleaning:{evidence:[]}}],hasMore:false});
   if(init?.method){const body=JSON.parse(String(init.body));detail.revision={...detail.revision,...body.fields,editVersion:detail.revision.editVersion+1};return json({reused:false});}
   if(url.startsWith("/api/product-revisions?"))return json({proposals:[{id:revisionId,productId,title:"Terracotta Pot",status:"NEEDS_REVIEW",editVersion:1,createdAt:"2026-10-24T00:00:00Z",product:{supplier:{name:"Pots supplier"}},_count:{variants:1}}],hasMore:true});
@@ -69,6 +71,7 @@ it("publishes an approved saved revision with a bounded idempotent request and s
  detail.revision.status="APPROVED";detail.blockers=[];
  mock.mockImplementation(async(url,init)=>{
   if(init?.method){const payload=JSON.parse(String(init.body));expect(Object.keys(payload).sort()).toEqual(["expectedEditVersion","requestId"]);expect(payload.expectedEditVersion).toBe(1);detail.revision.product.publishedRevisionId=revisionId;return json({reused:false});}
+  if(url.startsWith("/api/media")||url.endsWith("/media")||url.endsWith("/translations"))return json({items:[],hasMore:false});
   if(url.includes("/evidence"))return json({rows:[],hasMore:false});return json(detail);
  });
  render(<ReviewEditor productId={productId} revisionId={revisionId}/>);const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Publish approved revision"}));expect(await screen.findByRole("link",{name:"View published product →"})).toBeTruthy();expect(screen.queryByRole("button",{name:"Save changes"})).toBeNull();

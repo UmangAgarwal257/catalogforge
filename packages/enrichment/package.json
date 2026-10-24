@@ -9,7 +9,8 @@
     "./providers": "./src/providers.ts",
     "./fixture": "./src/fixture.ts",
     "./test-stub": "./src/test-stub.ts",
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./quota": "./src/quota.ts"
   },
   "dependencies": {
     "@catalogforge/db": "workspace:*",

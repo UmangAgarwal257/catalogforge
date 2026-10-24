@@ -1,3 +1,4 @@
+import { sourceFields } from "./translations";
 import { getDb } from "@catalogforge/db";
 import { z } from "zod";
 import { ReviewError, fieldsSchema, variantPatchSchema } from "./contracts";
@@ -30,8 +31,11 @@ export async function publishRevision(storeId: string, revisionId: string, input
     for (const v of r.variants) variantPatchSchema.parse({ variantId: v.variantId, priceMinor: v.priceMinor?.toString() ?? null, currency: v.currency, weightGrams: v.weightGrams, options: v.options });
     if (data.sources.some(s => s.sourceRow.import.status !== "COMPLETED")) throw new ReviewError("SOURCE_IMPORT_UNAVAILABLE", 422, "All linked source imports must have completed ingestion before publishing.");
     if (!data.sources.length) throw new ReviewError("SOURCE_REQUIRED", 422, "Publication requires retained source evidence.");
+    const media=await tx.revisionMedia.findMany({where:{revisionId,storeId},orderBy:[{primary:"desc"},{id:"asc"}],select:{assetId:true,variantId:true,primary:true,alt:true}});
+    const translations=await tx.translationDraft.findMany({where:{revisionId,storeId,status:"APPROVED",sourceHash:hash(sourceFields(r))}});
+    const translationsSnapshot=Object.fromEntries(translations.map(t=>[t.locale,{translationId:t.id,sourceHash:t.sourceHash,content:t.content}]));
     const publication = await tx.productPublication.create({ data: { storeId, revisionId, productId: r.productId, requestId: body.requestId, requestHash,
-      expectedEditVersion: body.expectedEditVersion, previousRevisionId: r.product.publishedRevisionId } });
+      mediaSnapshot:json(media),translationsSnapshot:json(translationsSnapshot),expectedEditVersion: body.expectedEditVersion, previousRevisionId: r.product.publishedRevisionId } });
     await tx.product.update({ where: { id: r.productId }, data: { publishedRevisionId: revisionId } });
     return { publication: json(publication), reused: false };
   });

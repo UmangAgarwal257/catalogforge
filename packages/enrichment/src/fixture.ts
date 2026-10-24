@@ -29,6 +29,10 @@ export async function removeFixture(storeId: string) {
   const db = getDb(), where = { storeId };
   await db.product.updateMany({ where, data: { publishedRevisionId: null } });
   await db.productPublication.deleteMany({ where });
+  await db.translationDraft.deleteMany({ where });
+  await db.productRevision.updateMany({where,data:{status:"DRAFT"}});
+  await db.revisionMedia.deleteMany({where});
+  await db.mediaAsset.deleteMany({where});
   await db.productReviewEvent.deleteMany({ where });
   await db.aIEnrichmentAttempt.deleteMany({ where }); await db.aIEnrichmentRun.deleteMany({ where });
   await db.groupingRowResult.deleteMany({ where }); await db.revisionSourceRow.deleteMany({ where });

@@ -14,14 +14,15 @@ Supplier files often contain inconsistent prices, repeated rows, incomplete vari
 - Supplier/source and product/revision database models with scoped relationships, canonical SKU uniqueness, protected original rows, and separate catalog snapshots.
 - Automatic cleaning, conservative grouping and real Gemini enrichment for two configured supplier profiles, with source evidence, durable checkpoints, free-tier quota pauses and protected drafts.
 - A local merchant review queue and editor with source evidence, variant corrections, audited decisions and separate approval/publication actions.
-- A public catalog, category browsing and variant-aware product pages backed only by published snapshots, plus published CSV/JSON and conservative Shopify CSV exports.
+- A public catalog, category browsing and variant-aware product pages backed only by published snapshots, with immutable product/variant photos, German/French locale selection and English fallback, plus published CSV/JSON and conservative Shopify CSV exports.
+- Development-only merchant photo review, immutable media publication snapshots, and versioned Gemini Free Tier translation drafts with manual review and approval.
 - Shared TypeScript packages, configuration validation, and local development checks.
 
-**Planned workflow**
+**Workflow**
 
-Upload CSV/XLSX and photos → clean and group rows into products/variants → generate descriptions with supplier evidence and field confidence → translate into German/French → merchant review → separate publication → storefront and CSV/JSON/Shopify export. Photos and German/French translation remain planned.
+Upload CSV/XLSX and photos → clean and group rows into products/variants → generate descriptions with supplier evidence and field confidence → translate into German/French → merchant review → separate publication → storefront and CSV/JSON/Shopify export.
 
-The planned catalog pipeline will flag missing or conflicting data for review rather than guess. Spreadsheet ingestion accepts files up to 10 MiB and 10,000 nonblank source records. Photo processing remains planned; no end-to-end throughput target has been demonstrated.
+The catalog pipeline flags missing or conflicting data for review rather than guessing. Spreadsheet ingestion accepts files up to 10 MiB and 10,000 nonblank source records. Development photo processing validates and preserves originals while serving bounded WebP previews.
 
 ## Tech Stack
 
@@ -36,7 +37,7 @@ The planned catalog pipeline will flag missing or conflicting data for review ra
 | Checks | Vitest, ESLint, TypeScript |
 | AI enrichment | Official Google Gen AI SDK; Gemini Developer API on a billing-disabled Free-tier project |
 
-The selected future integrations are Supabase Storage and Sharp.
+The selected future integration is Supabase Storage. Sharp is used for development-only photo verification and bounded WebP previews.
 
 ## Architecture
 
@@ -52,13 +53,13 @@ flowchart LR
     DB -->|Durable parse and catalog continuation| Worker
     Worker -->|Schedule and consume| Redis[(Redis / BullMQ)]
     Worker --> AI[Gemini API: Free tier required]
-    Worker -. Planned translation .-> AI
+    Worker -->|Gemini Free Tier translation| AI
     Storefront[Public storefront] -->|Published snapshot reads| DB
 ```
 
-Solid connections represent implemented services; the dashed translation connection is planned. Web and worker share the same private local storage directory.
+Solid connections represent implemented services. Web and worker share the same private local storage directory.
 
-PostgreSQL holds business state; Redis delivers asynchronous work. The storefront reads explicitly published snapshots without calling AI or waiting for imports. Translations remain planned.
+PostgreSQL holds business state; Redis delivers asynchronous work. The storefront reads explicitly published snapshots without calling AI or waiting for imports.
 
 Code is organized under [apps/web](./apps/web), [apps/worker](./apps/worker), [packages/db](./packages/db), [packages/shared](./packages/shared), and [packages/ingestion](./packages/ingestion). Operational details are in the [development guide](./docs/DEVELOPMENT.md).
 

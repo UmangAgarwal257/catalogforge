@@ -1,3 +1,4 @@
+import { nextGeminiCapacity } from "./quota";
 import { getDb } from "@catalogforge/db";
 import { z } from "zod";
 import { policySchema, PROMPT_VERSION, VALIDATOR_VERSION, candidateSchema, estimate, EnrichmentError, type Packet, type Policy } from "./contracts";
@@ -56,15 +57,9 @@ export async function processEnrichmentRun(storeId: string, runId: string, provi
       const fresh = await tx.aIEnrichmentRun.findUniqueOrThrow({ where: { id: runId } });
       if (fresh.fence !== claimed.fence || fresh.state !== "RUNNING") throw new EnrichmentError("FENCED");
       if (provider.name === "gemini") {
-        // One configured project today: serialize quota reservations across every
-        // process/run using this DB. Errors and unknown calls still consume quota.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('catalogforge-gemini-free-quota-v1'))::text`;
-        const now = Date.now();
-        const recent = await tx.aIEnrichmentAttempt.findMany({ where: { startedAt: { gt: new Date(now - 86400000) }, run: { policySnapshot: { path: ["provider"], equals: "gemini" } } }, orderBy: { startedAt: "desc" }, take: 21 });
-        let next = (recent[0]?.startedAt.getTime() ?? 0) + 60000;
-        if (recent.length >= policy.requestsPerDay) next = Math.max(next, recent[policy.requestsPerDay - 1]!.startedAt.getTime() + 86400000);
-        if (next > now) {
-          await tx.aIEnrichmentRun.update({ where: { id: runId }, data: { state: "RETRY_WAIT", errorCode: "FREE_TIER_QUOTA", nextAttemptAt: new Date(next), leaseUntil: null } });
+        const next = await nextGeminiCapacity(tx, policy);
+        if (next) {
+          await tx.aIEnrichmentRun.update({ where: { id: runId }, data: { state: "RETRY_WAIT", errorCode: "FREE_TIER_QUOTA", nextAttemptAt: next, leaseUntil: null } });
           return null;
         }
       }

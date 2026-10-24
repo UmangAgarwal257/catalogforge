@@ -10,10 +10,10 @@ export async function loadReview(storeId: string, id: string, tx: Tx = db()) {
   if (!revision) throw new ReviewError("NOT_FOUND", 404, "Proposal not found.");
   const sources = await tx.revisionSourceRow.findMany({ where: { productRevisionId: id, storeId }, include: { cleaningResult: true, sourceRow: { select: { rowNumber: true, sheetIndex: true, sheetName: true, import: { select: { supplierId: true, status: true } } } } }, take: 1001, orderBy: { sourceRowId: "asc" } });
   if (sources.some(s => s.sourceRow.import.supplierId !== revision.product.supplierId)) throw new ReviewError("EVIDENCE_SUPPLIER", 422, "Source evidence belongs to another supplier and requires correction.");
-  const runs = await tx.aIEnrichmentRun.findMany({ where: { revisionId: id, storeId, state: "COMPLETED" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 10 });
+  const runs = await tx.aIEnrichmentRun.findMany({ where: { revisionId: id, storeId, state: "COMPLETED" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 40 });
   const events = await tx.productReviewEvent.findMany({ where: { revisionId: id, storeId }, orderBy: { afterVersion: "asc" }, take: 1001 });
   if (revision.variants.length > 1000 || sources.length > 1000 || events.length > 1000) throw new ReviewError("REVIEW_LIMIT", 422, "This proposal exceeds the local editor limit (1,000 variants, source links or review events).");
-  return { revision, sources, runs, events };
+  return { revision, sources, runs:runs.filter(r=>(r.policySnapshot as {purpose?:string}).purpose!=="translation-v1").slice(0,10), events };
 }
 export type ReviewSnapshot = Awaited<ReturnType<typeof loadReview>>;
 export async function reviewDetail(storeId: string, id: string) {

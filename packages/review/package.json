@@ -9,14 +9,19 @@
     "./validation": "./src/validation.ts",
     "./publication": "./src/publication.ts",
     "./catalog": "./src/catalog.ts",
-    "./export": "./src/export.ts"
+    "./export": "./src/export.ts",
+    "./media": "./src/media.ts",
+    "./translations": "./src/translations.ts",
+    "./extras-http": "./src/extras-http.ts",
+    "./updates": "./src/updates.ts"
   },
   "dependencies": {
+    "@catalogforge/cleaning": "workspace:*",
     "@catalogforge/db": "workspace:*",
     "@catalogforge/enrichment": "workspace:*",
-    "@catalogforge/cleaning": "workspace:*",
     "@catalogforge/ingestion": "workspace:*",
-    "zod": "^4.0.0",
-    "@catalogforge/shared": "workspace:*"
+    "@catalogforge/shared": "workspace:*",
+    "sharp": "^0.35.5",
+    "zod": "^4.0.0"
   }
 }
